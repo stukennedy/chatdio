@@ -1,0 +1,36 @@
+{
+  "name": "conversational-audio",
+  "version": "1.0.0",
+  "description": "Web audio library for conversational AI with mic input, device management, WebSocket streaming, and real-time visualization",
+  "main": "dist/index.js",
+  "module": "dist/index.mjs",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsup src/index.ts --format cjs,esm --dts --clean",
+    "dev": "tsup src/index.ts --format cjs,esm --dts --watch",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": [
+    "web-audio",
+    "microphone",
+    "conversational-ai",
+    "websocket",
+    "audio-streaming",
+    "echo-cancellation"
+  ],
+  "license": "MIT",
+  "devDependencies": {
+    "tsup": "^8.0.0",
+    "typescript": "^5.3.0"
+  },
+  "files": [
+    "dist"
+  ]
+}
