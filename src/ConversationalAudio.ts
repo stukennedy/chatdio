@@ -29,6 +29,10 @@ export class ConversationalAudio extends TypedEventEmitter<ConversationalAudioEv
   private isMicActive = false;
   private config: ConversationalAudioConfig;
 
+  // Turn management
+  private currentTurnId: string | null = null;
+  private turnCounter = 0;
+
   constructor(config: ConversationalAudioConfig = {}) {
     super();
     this.config = config;
@@ -152,13 +156,18 @@ export class ConversationalAudio extends TypedEventEmitter<ConversationalAudioEv
 
   /**
    * Queue audio data for playback
+   * @param data - PCM audio data
+   * @param turnId - Optional turn ID (uses current turn if not provided)
    */
-  async playAudio(data: ArrayBuffer): Promise<void> {
+  async playAudio(data: ArrayBuffer, turnId?: string): Promise<void> {
     if (!this.isInitialized) {
       await this.initialize();
     }
 
-    await this.playback.queueAudio(data);
+    // Use provided turnId or current turn
+    const effectiveTurnId = turnId ?? this.currentTurnId ?? undefined;
+
+    await this.playback.queueAudio(data, effectiveTurnId);
 
     // Connect analyzer if not connected
     const analyzerNode = this.playback.getAnalyzerNode();
@@ -394,9 +403,130 @@ export class ConversationalAudio extends TypedEventEmitter<ConversationalAudioEv
 
   /**
    * Interrupt current playback (useful for barge-in)
+   * @deprecated Use interruptTurn() for turn-aware interruption
    */
   interrupt(): void {
     this.stopPlayback();
+  }
+
+  // ==================== Turn Management ====================
+
+  /**
+   * Generate a unique turn ID
+   */
+  private generateTurnId(): string {
+    this.turnCounter++;
+    return `turn_${Date.now()}_${this.turnCounter}`;
+  }
+
+  /**
+   * Start a new turn. This will:
+   * - Interrupt any currently playing audio
+   * - Clear the playback buffer
+   * - Set the new turn as current
+   * - Future audio from previous turns will be ignored
+   *
+   * @param turnId - Optional custom turn ID (auto-generated if not provided)
+   * @returns The new turn ID
+   */
+  startTurn(turnId?: string): string {
+    const newTurnId = turnId ?? this.generateTurnId();
+    const previousTurnId = this.currentTurnId;
+
+    // Interrupt current playback and set new turn in playback
+    this.playback.interruptTurn(newTurnId);
+
+    // Update our turn tracking
+    this.currentTurnId = newTurnId;
+
+    // Emit turn change event
+    this.emit("turn:started", newTurnId, previousTurnId);
+
+    return newTurnId;
+  }
+
+  /**
+   * Get the current turn ID
+   */
+  getCurrentTurnId(): string | null {
+    return this.currentTurnId;
+  }
+
+  /**
+   * Interrupt the current turn and optionally start a new one
+   * @param startNewTurn - Whether to start a new turn after interruption (default: true)
+   * @returns Object with interrupted turn ID and optionally new turn ID
+   */
+  interruptTurn(startNewTurn: boolean = true): {
+    interruptedTurnId: string | null;
+    newTurnId: string | null;
+  } {
+    const interruptedTurnId = this.currentTurnId;
+
+    // Interrupt playback
+    this.playback.interruptTurn();
+
+    // Emit interrupted event
+    if (interruptedTurnId) {
+      this.emit("turn:interrupted", interruptedTurnId);
+    }
+
+    // Start new turn if requested
+    let newTurnId: string | null = null;
+    if (startNewTurn) {
+      newTurnId = this.startTurn();
+    } else {
+      this.currentTurnId = null;
+    }
+
+    return { interruptedTurnId, newTurnId };
+  }
+
+  /**
+   * End the current turn without starting a new one
+   * Allows audio to continue playing but won't accept new audio without a turn
+   */
+  endTurn(): string | null {
+    const endedTurnId = this.currentTurnId;
+    this.currentTurnId = null;
+    this.playback.setCurrentTurn(null);
+
+    if (endedTurnId) {
+      this.emit("turn:ended", endedTurnId);
+    }
+
+    return endedTurnId;
+  }
+
+  /**
+   * Clear buffered audio for a specific turn or all turns
+   * Does not stop currently playing audio
+   * @param turnId - Specific turn to clear, or undefined for all
+   */
+  clearTurnBuffer(turnId?: string): void {
+    this.playback.clearTurnBuffer(turnId);
+  }
+
+  /**
+   * Check if audio for a given turn ID should be accepted
+   * @param turnId - The turn ID to check
+   */
+  shouldAcceptAudioForTurn(turnId: string): boolean {
+    return this.currentTurnId === null || this.currentTurnId === turnId;
+  }
+
+  /**
+   * Queue audio only if it matches the current turn
+   * @param data - PCM audio data
+   * @param turnId - Turn ID that this audio belongs to
+   * @returns true if audio was queued, false if ignored due to turn mismatch
+   */
+  async playAudioForTurn(data: ArrayBuffer, turnId: string): Promise<boolean> {
+    if (!this.shouldAcceptAudioForTurn(turnId)) {
+      return false;
+    }
+    await this.playAudio(data, turnId);
+    return true;
   }
 
   // ==================== Private Methods ====================
@@ -406,6 +536,26 @@ export class ConversationalAudio extends TypedEventEmitter<ConversationalAudioEv
     this.microphone.on("start", () => this.emit("mic:start"));
     this.microphone.on("stop", () => this.emit("mic:stop"));
     this.microphone.on("error", (error) => this.emit("mic:error", error));
+
+    // Microphone device events
+    this.microphone.on("device-lost", () => {
+      this.emit("mic:device-lost");
+    });
+
+    this.microphone.on("device-changed", (deviceId) => {
+      this.emit("mic:device-changed", deviceId);
+      // Re-connect analyzer after device change
+      const analyzerNode = this.microphone.getAnalyzerNode();
+      if (analyzerNode) {
+        this.micAnalyzer.disconnect();
+        this.micAnalyzer.connect(analyzerNode);
+        this.micAnalyzer.start();
+      }
+    });
+
+    this.microphone.on("restarting", () => {
+      this.emit("mic:restarting");
+    });
 
     // Forward audio data to WebSocket
     this.microphone.on("data", (data) => {
@@ -430,19 +580,31 @@ export class ConversationalAudio extends TypedEventEmitter<ConversationalAudioEv
       this.emit("playback:activity", data)
     );
 
-    // Device events
+    // Device events from device manager
     this.deviceManager.on("devices-changed", (devices) =>
       this.emit("device:changed", devices)
     );
-    this.deviceManager.on("input-changed", (device) =>
-      this.emit("device:input-changed", device)
-    );
-    this.deviceManager.on("output-changed", (device) =>
-      this.emit("device:output-changed", device)
-    );
-    this.deviceManager.on("device-disconnected", (device) =>
-      this.emit("device:disconnected", device)
-    );
+    this.deviceManager.on("input-changed", (device) => {
+      this.emit("device:input-changed", device);
+      // Auto-switch microphone if active and a specific device was selected
+      if (this.isMicActive && device) {
+        this.microphone.setDevice(device.deviceId).catch((err) => {
+          this.emit("mic:error", err);
+        });
+      }
+    });
+    this.deviceManager.on("output-changed", (device) => {
+      this.emit("device:output-changed", device);
+      // Auto-switch playback output device
+      if (device) {
+        this.playback.setOutputDevice(device.deviceId).catch((err) => {
+          this.emit("playback:error", err);
+        });
+      }
+    });
+    this.deviceManager.on("device-disconnected", (device) => {
+      this.emit("device:disconnected", device);
+    });
 
     // WebSocket events (if configured initially)
     if (this.websocket) {
@@ -463,15 +625,43 @@ export class ConversationalAudio extends TypedEventEmitter<ConversationalAudioEv
     this.websocket.on("error", (error) => this.emit("ws:error", error));
     this.websocket.on("message", (data) => this.emit("ws:message", data));
 
-    // Auto-play received audio
-    this.websocket.on("audio", async (data) => {
+    // Auto-play received audio (with turn management)
+    this.websocket.on("audio", async (data, turnId?: string) => {
       this.emit("ws:audio", data);
 
+      // If turnId provided, check if it should be accepted
+      if (turnId && !this.shouldAcceptAudioForTurn(turnId)) {
+        return;
+      }
+
       try {
-        await this.playAudio(data);
+        await this.playAudio(data, turnId);
       } catch (error) {
         this.emit("playback:error", error as Error);
       }
     });
+  }
+
+  /**
+   * Play audio received from WebSocket with turn validation
+   * @param data - Audio data from WebSocket
+   * @param turnId - Optional turn ID from the message
+   */
+  async handleWebSocketAudio(
+    data: ArrayBuffer,
+    turnId?: string
+  ): Promise<boolean> {
+    // If turnId provided, validate against current turn
+    if (turnId && !this.shouldAcceptAudioForTurn(turnId)) {
+      return false;
+    }
+
+    try {
+      await this.playAudio(data, turnId);
+      return true;
+    } catch (error) {
+      this.emit("playback:error", error as Error);
+      return false;
+    }
   }
 }

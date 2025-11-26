@@ -7,6 +7,10 @@ export { MicrophoneCapture, AudioFormatConverter } from "./MicrophoneCapture";
 export { AudioPlayback } from "./AudioPlayback";
 export { WebSocketBridge } from "./WebSocketBridge";
 export { ActivityAnalyzer, VisualizationUtils } from "./ActivityAnalyzer";
+export {
+  createWorkletBlobUrl,
+  audioWorkletProcessorCode,
+} from "./audio-worklet-processor";
 
 // Event emitter
 export { TypedEventEmitter } from "./EventEmitter";
@@ -26,4 +30,5 @@ export type {
   ConnectionState,
   ConversationalAudioConfig,
   ConversationalAudioEvents,
+  ParsedAudioResult,
 } from "./types";

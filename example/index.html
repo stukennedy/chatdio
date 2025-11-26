@@ -1,0 +1,622 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Conversational Audio Demo</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Outfit:wght@300;400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --bg-primary: #0a0a0f;
+        --bg-secondary: #12121a;
+        --bg-tertiary: #1a1a25;
+        --accent-primary: #6366f1;
+        --accent-secondary: #818cf8;
+        --accent-glow: rgba(99, 102, 241, 0.4);
+        --text-primary: #f8fafc;
+        --text-secondary: #94a3b8;
+        --text-muted: #64748b;
+        --success: #22c55e;
+        --warning: #f59e0b;
+        --error: #ef4444;
+        --border: rgba(255, 255, 255, 0.08);
+      }
+
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      body {
+        font-family: "Outfit", sans-serif;
+        background: var(--bg-primary);
+        color: var(--text-primary);
+        min-height: 100vh;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        padding: 2rem;
+        background-image: radial-gradient(
+            ellipse at top,
+            rgba(99, 102, 241, 0.1) 0%,
+            transparent 50%
+          ),
+          radial-gradient(
+            ellipse at bottom right,
+            rgba(139, 92, 246, 0.05) 0%,
+            transparent 50%
+          );
+      }
+
+      .container {
+        max-width: 900px;
+        width: 100%;
+      }
+
+      header {
+        text-align: center;
+        margin-bottom: 3rem;
+      }
+
+      h1 {
+        font-size: 2.5rem;
+        font-weight: 600;
+        background: linear-gradient(
+          135deg,
+          var(--text-primary) 0%,
+          var(--accent-secondary) 100%
+        );
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+        margin-bottom: 0.5rem;
+      }
+
+      .subtitle {
+        color: var(--text-secondary);
+        font-size: 1.1rem;
+        font-weight: 300;
+      }
+
+      .card {
+        background: var(--bg-secondary);
+        border: 1px solid var(--border);
+        border-radius: 16px;
+        padding: 1.5rem;
+        margin-bottom: 1.5rem;
+        backdrop-filter: blur(10px);
+      }
+
+      .card-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 1rem;
+      }
+
+      .card-title {
+        font-size: 1rem;
+        font-weight: 500;
+        color: var(--text-secondary);
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+      }
+
+      .status-badge {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        font-size: 0.875rem;
+        font-family: "JetBrains Mono", monospace;
+        padding: 0.25rem 0.75rem;
+        border-radius: 9999px;
+        background: var(--bg-tertiary);
+      }
+
+      .status-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: var(--text-muted);
+      }
+
+      .status-dot.active {
+        background: var(--success);
+        box-shadow: 0 0 8px var(--success);
+      }
+
+      .status-dot.connecting {
+        background: var(--warning);
+        animation: pulse 1s infinite;
+      }
+
+      .status-dot.error {
+        background: var(--error);
+      }
+
+      @keyframes pulse {
+        0%,
+        100% {
+          opacity: 1;
+        }
+        50% {
+          opacity: 0.5;
+        }
+      }
+
+      /* Controls */
+      .controls {
+        display: flex;
+        gap: 1rem;
+        flex-wrap: wrap;
+      }
+
+      button {
+        font-family: "Outfit", sans-serif;
+        font-size: 0.95rem;
+        font-weight: 500;
+        padding: 0.75rem 1.5rem;
+        border-radius: 10px;
+        border: none;
+        cursor: pointer;
+        transition: all 0.2s ease;
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+      }
+
+      button:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+
+      .btn-primary {
+        background: var(--accent-primary);
+        color: white;
+      }
+
+      .btn-primary:hover:not(:disabled) {
+        background: var(--accent-secondary);
+        box-shadow: 0 4px 20px var(--accent-glow);
+      }
+
+      .btn-secondary {
+        background: var(--bg-tertiary);
+        color: var(--text-primary);
+        border: 1px solid var(--border);
+      }
+
+      .btn-secondary:hover:not(:disabled) {
+        background: var(--bg-primary);
+        border-color: var(--accent-primary);
+      }
+
+      .btn-danger {
+        background: rgba(239, 68, 68, 0.2);
+        color: var(--error);
+        border: 1px solid rgba(239, 68, 68, 0.3);
+      }
+
+      .btn-danger:hover:not(:disabled) {
+        background: rgba(239, 68, 68, 0.3);
+      }
+
+      /* Device Selectors */
+      .device-selectors {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 1rem;
+      }
+
+      .device-select-group label {
+        display: block;
+        font-size: 0.85rem;
+        color: var(--text-secondary);
+        margin-bottom: 0.5rem;
+      }
+
+      select {
+        width: 100%;
+        font-family: "Outfit", sans-serif;
+        font-size: 0.9rem;
+        padding: 0.65rem 1rem;
+        border-radius: 8px;
+        border: 1px solid var(--border);
+        background: var(--bg-tertiary);
+        color: var(--text-primary);
+        cursor: pointer;
+        appearance: none;
+        background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+        background-repeat: no-repeat;
+        background-position: right 0.75rem center;
+      }
+
+      select:focus {
+        outline: none;
+        border-color: var(--accent-primary);
+      }
+
+      /* Visualizations */
+      .visualization-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 1.5rem;
+      }
+
+      .viz-card {
+        background: var(--bg-tertiary);
+        border-radius: 12px;
+        padding: 1rem;
+      }
+
+      .viz-label {
+        font-size: 0.8rem;
+        color: var(--text-muted);
+        margin-bottom: 0.75rem;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
+
+      .level-value {
+        font-family: "JetBrains Mono", monospace;
+        color: var(--accent-secondary);
+      }
+
+      .level-bar-container {
+        height: 8px;
+        background: var(--bg-primary);
+        border-radius: 4px;
+        overflow: hidden;
+      }
+
+      .level-bar {
+        height: 100%;
+        background: linear-gradient(
+          90deg,
+          var(--accent-primary),
+          var(--accent-secondary)
+        );
+        border-radius: 4px;
+        transition: width 0.05s ease;
+        width: 0%;
+      }
+
+      .level-bar.speaking {
+        background: linear-gradient(90deg, var(--success), #4ade80);
+      }
+
+      canvas {
+        width: 100%;
+        height: 60px;
+        border-radius: 8px;
+        background: var(--bg-primary);
+        margin-top: 0.5rem;
+      }
+
+      /* Turn Management */
+      .turn-info {
+        display: flex;
+        gap: 1rem;
+        align-items: center;
+        flex-wrap: wrap;
+      }
+
+      .turn-badge {
+        font-family: "JetBrains Mono", monospace;
+        font-size: 0.8rem;
+        padding: 0.35rem 0.75rem;
+        background: rgba(99, 102, 241, 0.15);
+        border: 1px solid rgba(99, 102, 241, 0.3);
+        border-radius: 6px;
+        color: var(--accent-secondary);
+      }
+
+      .turn-badge.interrupted {
+        background: rgba(239, 68, 68, 0.15);
+        border-color: rgba(239, 68, 68, 0.3);
+        color: var(--error);
+        text-decoration: line-through;
+      }
+
+      /* Log */
+      .log-container {
+        background: var(--bg-tertiary);
+        border-radius: 8px;
+        padding: 1rem;
+        max-height: 200px;
+        overflow-y: auto;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 0.8rem;
+      }
+
+      .log-entry {
+        padding: 0.25rem 0;
+        color: var(--text-secondary);
+        border-bottom: 1px solid var(--border);
+      }
+
+      .log-entry:last-child {
+        border-bottom: none;
+      }
+
+      .log-entry .time {
+        color: var(--text-muted);
+        margin-right: 0.5rem;
+      }
+
+      .log-entry.event {
+        color: var(--accent-secondary);
+      }
+      .log-entry.error {
+        color: var(--error);
+      }
+      .log-entry.success {
+        color: var(--success);
+      }
+
+      /* Volume Control */
+      .volume-control {
+        display: flex;
+        align-items: center;
+        gap: 1rem;
+      }
+
+      .volume-control label {
+        font-size: 0.85rem;
+        color: var(--text-secondary);
+        white-space: nowrap;
+      }
+
+      input[type="range"] {
+        flex: 1;
+        height: 6px;
+        border-radius: 3px;
+        background: var(--bg-primary);
+        appearance: none;
+        cursor: pointer;
+      }
+
+      input[type="range"]::-webkit-slider-thumb {
+        appearance: none;
+        width: 16px;
+        height: 16px;
+        border-radius: 50%;
+        background: var(--accent-primary);
+        cursor: pointer;
+      }
+
+      input[type="range"]::-webkit-slider-thumb:hover {
+        background: var(--accent-secondary);
+      }
+
+      /* WebSocket URL Input */
+      .ws-input-group {
+        display: flex;
+        gap: 0.75rem;
+        margin-bottom: 1rem;
+      }
+
+      input[type="text"] {
+        flex: 1;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 0.9rem;
+        padding: 0.65rem 1rem;
+        border-radius: 8px;
+        border: 1px solid var(--border);
+        background: var(--bg-tertiary);
+        color: var(--text-primary);
+      }
+
+      input[type="text"]:focus {
+        outline: none;
+        border-color: var(--accent-primary);
+      }
+
+      input[type="text"]::placeholder {
+        color: var(--text-muted);
+      }
+
+      /* Responsive */
+      @media (max-width: 640px) {
+        .device-selectors,
+        .visualization-grid {
+          grid-template-columns: 1fr;
+        }
+
+        .controls {
+          flex-direction: column;
+        }
+
+        button {
+          width: 100%;
+          justify-content: center;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <header>
+        <h1>🎙️ Conversational Audio</h1>
+        <p class="subtitle">Web Audio Library Demo</p>
+      </header>
+
+      <!-- Connection Card -->
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">Connection</span>
+          <div class="status-badge">
+            <span class="status-dot" id="wsStatusDot"></span>
+            <span id="wsStatusText">Disconnected</span>
+          </div>
+        </div>
+        <div class="ws-input-group">
+          <input
+            type="text"
+            id="wsUrl"
+            placeholder="wss://your-server.com/audio"
+            value="ws://localhost:3000/audio"
+          />
+          <button class="btn-secondary" id="connectBtn">Connect</button>
+        </div>
+        <div class="controls">
+          <button class="btn-primary" id="initBtn">
+            <svg
+              width="18"
+              height="18"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+            >
+              <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
+              <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+              <line x1="12" y1="19" x2="12" y2="23" />
+              <line x1="8" y1="23" x2="16" y2="23" />
+            </svg>
+            Initialize Audio
+          </button>
+          <button class="btn-primary" id="startBtn" disabled>
+            <svg
+              width="18"
+              height="18"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+            >
+              <polygon points="5 3 19 12 5 21 5 3" />
+            </svg>
+            Start Conversation
+          </button>
+          <button class="btn-danger" id="stopBtn" disabled>
+            <svg
+              width="18"
+              height="18"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+            >
+              <rect x="6" y="6" width="12" height="12" />
+            </svg>
+            Stop
+          </button>
+        </div>
+      </div>
+
+      <!-- Devices Card -->
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">Audio Devices</span>
+        </div>
+        <div class="device-selectors">
+          <div class="device-select-group">
+            <label>Input Device (Microphone)</label>
+            <select id="inputDevice" disabled>
+              <option value="">Initialize first...</option>
+            </select>
+          </div>
+          <div class="device-select-group">
+            <label>Output Device (Speaker)</label>
+            <select id="outputDevice" disabled>
+              <option value="">Initialize first...</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <!-- Visualization Card -->
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">Audio Activity</span>
+        </div>
+        <div class="visualization-grid">
+          <div class="viz-card">
+            <div class="viz-label">
+              <span>🎤 Microphone</span>
+              <span class="level-value" id="micLevel">0%</span>
+            </div>
+            <div class="level-bar-container">
+              <div class="level-bar" id="micLevelBar"></div>
+            </div>
+            <canvas id="micCanvas"></canvas>
+          </div>
+          <div class="viz-card">
+            <div class="viz-label">
+              <span>🔊 Playback</span>
+              <span class="level-value" id="playbackLevel">0%</span>
+            </div>
+            <div class="level-bar-container">
+              <div class="level-bar" id="playbackLevelBar"></div>
+            </div>
+            <canvas id="playbackCanvas"></canvas>
+          </div>
+        </div>
+        <div class="volume-control" style="margin-top: 1rem">
+          <label>Volume:</label>
+          <input type="range" id="volumeSlider" min="0" max="100" value="100" />
+          <span
+            id="volumeValue"
+            style="
+              font-family: 'JetBrains Mono', monospace;
+              font-size: 0.85rem;
+              color: var(--text-secondary);
+            "
+            >100%</span
+          >
+        </div>
+      </div>
+
+      <!-- Turn Management Card -->
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">Turn Management</span>
+        </div>
+        <div class="controls" style="margin-bottom: 1rem">
+          <button class="btn-secondary" id="startTurnBtn" disabled>
+            Start New Turn
+          </button>
+          <button class="btn-danger" id="interruptBtn" disabled>
+            Interrupt (Barge-in)
+          </button>
+          <button class="btn-secondary" id="playTestBtn" disabled>
+            Play Test Tone
+          </button>
+        </div>
+        <div class="turn-info" id="turnInfo">
+          <span style="color: var(--text-muted)">No active turn</span>
+        </div>
+      </div>
+
+      <!-- Log Card -->
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">Event Log</span>
+          <button
+            class="btn-secondary"
+            id="clearLogBtn"
+            style="padding: 0.35rem 0.75rem; font-size: 0.8rem"
+          >
+            Clear
+          </button>
+        </div>
+        <div class="log-container" id="logContainer">
+          <div class="log-entry">
+            <span class="time">--:--:--</span>
+            Ready to initialize...
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script type="module" src="/example/main.js"></script>
+  </body>
+</html>

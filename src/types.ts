@@ -72,6 +72,14 @@ export interface PlaybackConfig {
 }
 
 /**
+ * Result from parsing incoming audio, optionally with turn ID
+ */
+export interface ParsedAudioResult {
+  data: ArrayBuffer;
+  turnId?: string;
+}
+
+/**
  * WebSocket bridge configuration
  */
 export interface WebSocketConfig {
@@ -91,8 +99,10 @@ export interface WebSocketConfig {
   binaryMode?: boolean;
   /** Custom message wrapper for outgoing audio */
   wrapOutgoingAudio?: (data: ArrayBuffer) => string | ArrayBuffer;
-  /** Custom message parser for incoming audio */
-  parseIncomingAudio?: (data: MessageEvent) => ArrayBuffer | null;
+  /** Custom message parser for incoming audio. Return ArrayBuffer or ParsedAudioResult with turnId */
+  parseIncomingAudio?: (
+    data: MessageEvent
+  ) => ArrayBuffer | ParsedAudioResult | null;
 }
 
 /**
@@ -165,6 +175,12 @@ export interface ConversationalAudioEvents {
   "mic:error": (error: Error) => void;
   /** Microphone activity update */
   "mic:activity": (data: AudioActivityData) => void;
+  /** Microphone device was lost/disconnected */
+  "mic:device-lost": () => void;
+  /** Microphone switched to a different device */
+  "mic:device-changed": (deviceId: string) => void;
+  /** Microphone is restarting (after device change or recovery) */
+  "mic:restarting": () => void;
 
   /** Playback started */
   "playback:start": () => void;
@@ -198,6 +214,13 @@ export interface ConversationalAudioEvents {
   "device:output-changed": (device: AudioDevice | null) => void;
   /** Device disconnected */
   "device:disconnected": (device: AudioDevice) => void;
+
+  /** New turn started */
+  "turn:started": (turnId: string, previousTurnId: string | null) => void;
+  /** Turn was interrupted (barge-in) */
+  "turn:interrupted": (turnId: string) => void;
+  /** Turn ended normally */
+  "turn:ended": (turnId: string) => void;
 }
 
 /**

@@ -1,4 +1,5 @@
 import { TypedEventEmitter } from "./EventEmitter";
+import { createWorkletBlobUrl } from "./audio-worklet-processor";
 import type { MicrophoneConfig, SampleRate, BitDepth } from "./types";
 
 interface MicrophoneCaptureEvents {
@@ -9,24 +10,36 @@ interface MicrophoneCaptureEvents {
   stop: () => void;
   error: (error: Error) => void;
   level: (level: number) => void;
+  "device-lost": () => void;
+  "device-changed": (deviceId: string) => void;
+  restarting: () => void;
 }
 
 /**
  * Captures microphone audio with echo cancellation and resampling
  * Cross-browser compatible (Chrome, Firefox, Safari)
+ * Uses AudioWorkletNode when available, falls back to ScriptProcessorNode
  */
 export class MicrophoneCapture extends TypedEventEmitter<MicrophoneCaptureEvents> {
   private audioContext: AudioContext | null = null;
   private mediaStream: MediaStream | null = null;
   private sourceNode: MediaStreamAudioSourceNode | null = null;
+  private workletNode: AudioWorkletNode | null = null;
   private processorNode: ScriptProcessorNode | null = null;
   private analyzerNode: AnalyserNode | null = null;
   private isCapturing = false;
   private config: Required<MicrophoneConfig>;
+  private useWorklet = false;
+  private workletBlobUrl: string | null = null;
 
   // For resampling
   private inputSampleRate: number = 48000;
-  private resampleBuffer: Float32Array[] = [];
+
+  // Auto-restart on device issues
+  private autoRestart = true;
+  private restartAttempts = 0;
+  private maxRestartAttempts = 3;
+  private restartDelay = 500;
 
   constructor(config: MicrophoneConfig = {}) {
     super();
@@ -41,6 +54,24 @@ export class MicrophoneCapture extends TypedEventEmitter<MicrophoneCaptureEvents
   }
 
   /**
+   * Enable or disable auto-restart on device issues
+   */
+  setAutoRestart(enabled: boolean): void {
+    this.autoRestart = enabled;
+  }
+
+  /**
+   * Check if AudioWorklet is supported
+   */
+  private isWorkletSupported(): boolean {
+    return (
+      typeof AudioWorkletNode !== "undefined" &&
+      typeof AudioContext !== "undefined" &&
+      "audioWorklet" in AudioContext.prototype
+    );
+  }
+
+  /**
    * Start capturing microphone audio
    * Must be called from a user gesture on Safari/Firefox
    */
@@ -49,6 +80,11 @@ export class MicrophoneCapture extends TypedEventEmitter<MicrophoneCaptureEvents
       return;
     }
 
+    this.restartAttempts = 0;
+    await this.startInternal();
+  }
+
+  private async startInternal(): Promise<void> {
     try {
       // Create AudioContext (handle Safari prefix)
       const AudioContextClass =
@@ -77,11 +113,19 @@ export class MicrophoneCapture extends TypedEventEmitter<MicrophoneCaptureEvents
           echoCancellation: { ideal: this.config.echoCancellation },
           noiseSuppression: { ideal: this.config.noiseSuppression },
           autoGainControl: { ideal: this.config.autoGainControl },
-          // Note: sampleRate constraint is not well supported, we'll resample manually
         },
       };
 
       this.mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
+
+      // Listen for track ended (device disconnected)
+      const audioTrack = this.mediaStream.getAudioTracks()[0];
+      if (audioTrack) {
+        audioTrack.onended = () => this.handleTrackEnded();
+
+        // Also listen for mute (some browsers use this for disconnection)
+        audioTrack.onmute = () => this.handleTrackMuted();
+      }
 
       // Create audio nodes
       this.sourceNode = this.audioContext.createMediaStreamSource(
@@ -93,23 +137,22 @@ export class MicrophoneCapture extends TypedEventEmitter<MicrophoneCaptureEvents
       this.analyzerNode.fftSize = 256;
       this.analyzerNode.smoothingTimeConstant = 0.3;
 
-      // Create processor node (ScriptProcessorNode for cross-browser compatibility)
-      // Note: ScriptProcessorNode is deprecated but has best browser support
-      // AudioWorklet requires Safari 14.1+ and separate worklet file
-      this.processorNode = this.audioContext.createScriptProcessor(
-        this.config.bufferSize,
-        1, // mono input
-        1 // mono output
-      );
-
-      this.processorNode.onaudioprocess = this.handleAudioProcess;
-
-      // Connect nodes: source -> analyzer -> processor -> destination (muted)
-      this.sourceNode.connect(this.analyzerNode);
-      this.analyzerNode.connect(this.processorNode);
-      // Connect to destination to keep the processor running (required in some browsers)
-      // The output is silent because we're not modifying it
-      this.processorNode.connect(this.audioContext.destination);
+      // Try to use AudioWorklet, fall back to ScriptProcessorNode
+      if (this.isWorkletSupported()) {
+        try {
+          await this.setupWorkletNode();
+          this.useWorklet = true;
+        } catch {
+          console.warn(
+            "AudioWorklet setup failed, falling back to ScriptProcessorNode"
+          );
+          this.setupScriptProcessorNode();
+          this.useWorklet = false;
+        }
+      } else {
+        this.setupScriptProcessorNode();
+        this.useWorklet = false;
+      }
 
       this.isCapturing = true;
       this.emit("start");
@@ -118,6 +161,121 @@ export class MicrophoneCapture extends TypedEventEmitter<MicrophoneCaptureEvents
       const err = error instanceof Error ? error : new Error(String(error));
       this.emit("error", err);
       throw err;
+    }
+  }
+
+  private async setupWorkletNode(): Promise<void> {
+    if (!this.audioContext || !this.sourceNode || !this.analyzerNode) {
+      throw new Error("Audio context not ready");
+    }
+
+    // Create blob URL for worklet processor
+    if (!this.workletBlobUrl) {
+      this.workletBlobUrl = createWorkletBlobUrl();
+    }
+
+    // Load the worklet module
+    await this.audioContext.audioWorklet.addModule(this.workletBlobUrl);
+
+    // Create worklet node
+    this.workletNode = new AudioWorkletNode(
+      this.audioContext,
+      "microphone-processor"
+    );
+
+    // Handle messages from worklet
+    this.workletNode.port.onmessage = (event) => {
+      if (!this.isCapturing) return;
+
+      if (event.data.type === "audio") {
+        const floatData = event.data.buffer as Float32Array;
+        const resampledData = this.resample(floatData);
+        const pcmData = this.floatTo16BitPCM(resampledData);
+        this.emit("data", pcmData.buffer as ArrayBuffer);
+      } else if (event.data.type === "level") {
+        this.emit("level", event.data.level);
+      }
+    };
+
+    // Connect nodes
+    this.sourceNode.connect(this.analyzerNode);
+    this.analyzerNode.connect(this.workletNode);
+    // Connect to destination to keep processing active
+    this.workletNode.connect(this.audioContext.destination);
+  }
+
+  private setupScriptProcessorNode(): void {
+    if (!this.audioContext || !this.sourceNode || !this.analyzerNode) {
+      throw new Error("Audio context not ready");
+    }
+
+    // Create processor node (deprecated but has wider support)
+    this.processorNode = this.audioContext.createScriptProcessor(
+      this.config.bufferSize,
+      1, // mono input
+      1 // mono output
+    );
+
+    this.processorNode.onaudioprocess = this.handleAudioProcess;
+
+    // Connect nodes: source -> analyzer -> processor -> destination (muted)
+    this.sourceNode.connect(this.analyzerNode);
+    this.analyzerNode.connect(this.processorNode);
+    this.processorNode.connect(this.audioContext.destination);
+  }
+
+  private handleTrackEnded = (): void => {
+    console.warn("Audio track ended (device disconnected)");
+    this.emit("device-lost");
+
+    if (this.autoRestart && this.isCapturing) {
+      this.handleAutoRestart();
+    }
+  };
+
+  private handleTrackMuted = (): void => {
+    // Some browsers emit mute when device is disconnected
+    const track = this.mediaStream?.getAudioTracks()[0];
+    if (track && track.readyState === "ended") {
+      this.handleTrackEnded();
+    }
+  };
+
+  private async handleAutoRestart(): Promise<void> {
+    if (this.restartAttempts >= this.maxRestartAttempts) {
+      console.error("Max restart attempts reached");
+      this.emit(
+        "error",
+        new Error("Device lost and could not reconnect after multiple attempts")
+      );
+      this.stop();
+      return;
+    }
+
+    this.restartAttempts++;
+    this.emit("restarting");
+
+    // Clean up current resources but don't emit stop
+    this.cleanupInternal();
+
+    // Wait before attempting restart
+    await new Promise((resolve) => setTimeout(resolve, this.restartDelay));
+
+    try {
+      // Clear deviceId to use default device
+      const previousDeviceId = this.config.deviceId;
+      this.config.deviceId = "";
+
+      await this.startInternal();
+
+      // Notify about device change
+      if (previousDeviceId) {
+        this.emit("device-changed", "default");
+      }
+    } catch (error) {
+      console.error("Failed to restart after device loss:", error);
+      // Try again
+      this.handleAutoRestart();
     }
   }
 
@@ -143,13 +301,18 @@ export class MicrophoneCapture extends TypedEventEmitter<MicrophoneCaptureEvents
 
   /**
    * Change the input device
+   * Will seamlessly restart capture with new device
    */
   async setDevice(deviceId: string): Promise<void> {
+    const wasCapturing = this.isCapturing;
     this.config.deviceId = deviceId;
-    if (this.isCapturing) {
+
+    if (wasCapturing) {
       // Restart with new device
-      this.stop();
-      await this.start();
+      this.emit("restarting");
+      this.cleanupInternal();
+      await this.startInternal();
+      this.emit("device-changed", deviceId);
     }
   }
 
@@ -174,8 +337,9 @@ export class MicrophoneCapture extends TypedEventEmitter<MicrophoneCaptureEvents
     Object.assign(this.config, config);
 
     if (needsRestart) {
-      this.stop();
-      await this.start();
+      this.emit("restarting");
+      this.cleanupInternal();
+      await this.startInternal();
     }
   }
 
@@ -198,6 +362,13 @@ export class MicrophoneCapture extends TypedEventEmitter<MicrophoneCaptureEvents
    */
   getOutputSampleRate(): SampleRate {
     return this.config.sampleRate;
+  }
+
+  /**
+   * Check if using AudioWorklet (vs deprecated ScriptProcessorNode)
+   */
+  isUsingWorklet(): boolean {
+    return this.useWorklet;
   }
 
   private handleAudioProcess = (event: AudioProcessingEvent): void => {
@@ -263,7 +434,13 @@ export class MicrophoneCapture extends TypedEventEmitter<MicrophoneCaptureEvents
     return output;
   }
 
-  private cleanup(): void {
+  private cleanupInternal(): void {
+    if (this.workletNode) {
+      this.workletNode.port.onmessage = null;
+      this.workletNode.disconnect();
+      this.workletNode = null;
+    }
+
     if (this.processorNode) {
       this.processorNode.disconnect();
       this.processorNode.onaudioprocess = null;
@@ -281,21 +458,30 @@ export class MicrophoneCapture extends TypedEventEmitter<MicrophoneCaptureEvents
     }
 
     if (this.mediaStream) {
-      this.mediaStream.getTracks().forEach((track) => track.stop());
+      this.mediaStream.getTracks().forEach((track) => {
+        track.onended = null;
+        track.onmute = null;
+        track.stop();
+      });
       this.mediaStream = null;
     }
 
-    if (this.audioContext) {
-      // Close context if possible
-      if (this.audioContext.state !== "closed") {
-        this.audioContext.close().catch(() => {
-          // Ignore close errors
-        });
-      }
-      this.audioContext = null;
+    if (this.audioContext && this.audioContext.state !== "closed") {
+      this.audioContext.close().catch(() => {
+        // Ignore close errors
+      });
     }
+    this.audioContext = null;
+  }
 
-    this.resampleBuffer = [];
+  private cleanup(): void {
+    this.cleanupInternal();
+
+    // Clean up worklet blob URL
+    if (this.workletBlobUrl) {
+      URL.revokeObjectURL(this.workletBlobUrl);
+      this.workletBlobUrl = null;
+    }
   }
 }
 

@@ -8,9 +8,17 @@ interface WebSocketBridgeEvents {
   disconnected: (code: number, reason: string) => void;
   reconnecting: (attempt: number) => void;
   error: (error: Error) => void;
-  audio: (data: ArrayBuffer) => void;
+  audio: (data: ArrayBuffer, turnId?: string) => void;
   message: (data: unknown) => void;
   "state-change": (state: ConnectionState) => void;
+}
+
+/**
+ * Result from parsing incoming audio, optionally with turn ID
+ */
+export interface ParsedAudioResult {
+  data: ArrayBuffer;
+  turnId?: string;
 }
 
 /**
@@ -276,13 +284,17 @@ export class WebSocketBridge extends TypedEventEmitter<WebSocketBridgeEvents> {
 
   private handleMessage(event: MessageEvent): void {
     try {
-      let audioData: ArrayBuffer | null = null;
-
       // Custom parser takes precedence
       if (this.config.parseIncomingAudio) {
-        audioData = this.config.parseIncomingAudio(event);
-        if (audioData) {
-          this.emit("audio", audioData);
+        const result = this.config.parseIncomingAudio(event);
+        if (result) {
+          // Support both ArrayBuffer and ParsedAudioResult
+          if (result instanceof ArrayBuffer) {
+            this.emit("audio", result);
+          } else if (typeof result === "object" && "data" in result) {
+            const parsed = result as ParsedAudioResult;
+            this.emit("audio", parsed.data, parsed.turnId);
+          }
           return;
         }
         // If parser returns null, treat as non-audio message
@@ -303,8 +315,9 @@ export class WebSocketBridge extends TypedEventEmitter<WebSocketBridgeEvents> {
 
           // Check for audio in JSON wrapper
           if (parsed.type === "audio" && parsed.data) {
-            audioData = this.base64ToArrayBuffer(parsed.data);
-            this.emit("audio", audioData);
+            const audioData = this.base64ToArrayBuffer(parsed.data);
+            // Support turnId in JSON messages
+            this.emit("audio", audioData, parsed.turnId);
             return;
           }
 

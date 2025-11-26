@@ -12,11 +12,13 @@ interface AudioPlaybackEvents {
   level: (level: number) => void;
   "buffer-low": () => void;
   "buffer-empty": () => void;
+  "turn-interrupted": (turnId: string) => void;
 }
 
 interface QueuedAudio {
   buffer: AudioBuffer;
   startTime: number;
+  turnId?: string;
 }
 
 /**
@@ -40,6 +42,10 @@ export class AudioPlayback extends TypedEventEmitter<AudioPlaybackEvents> {
   // For buffer management
   private bufferCheckInterval: number | null = null;
   private lowBufferThreshold = 0.5; // seconds
+
+  // Turn management
+  private currentTurnId: string | null = null;
+  private currentSourceTurnId: string | null = null;
 
   constructor(config: PlaybackConfig = {}) {
     super();
@@ -136,10 +142,16 @@ export class AudioPlayback extends TypedEventEmitter<AudioPlaybackEvents> {
   /**
    * Queue audio data for playback
    * @param data - PCM audio data (raw bytes)
+   * @param turnId - Optional turn ID to associate with this audio
    */
-  async queueAudio(data: ArrayBuffer): Promise<void> {
+  async queueAudio(data: ArrayBuffer, turnId?: string): Promise<void> {
     if (!this.audioContext || !this.gainNode) {
       throw new Error("AudioPlayback not initialized");
+    }
+
+    // If turnId provided and doesn't match current turn, ignore
+    if (turnId && this.currentTurnId && turnId !== this.currentTurnId) {
+      return;
     }
 
     // Ensure context is running
@@ -157,7 +169,7 @@ export class AudioPlayback extends TypedEventEmitter<AudioPlaybackEvents> {
       currentTime + this.config.bufferAhead
     );
 
-    this.audioQueue.push({ buffer: audioBuffer, startTime });
+    this.audioQueue.push({ buffer: audioBuffer, startTime, turnId });
     this.nextPlayTime = startTime + audioBuffer.duration;
 
     // Start playback if not already playing
@@ -168,10 +180,20 @@ export class AudioPlayback extends TypedEventEmitter<AudioPlaybackEvents> {
 
   /**
    * Queue pre-decoded AudioBuffer for playback
+   * @param audioBuffer - Pre-decoded AudioBuffer
+   * @param turnId - Optional turn ID to associate with this audio
    */
-  async queueAudioBuffer(audioBuffer: AudioBuffer): Promise<void> {
+  async queueAudioBuffer(
+    audioBuffer: AudioBuffer,
+    turnId?: string
+  ): Promise<void> {
     if (!this.audioContext || !this.gainNode) {
       throw new Error("AudioPlayback not initialized");
+    }
+
+    // If turnId provided and doesn't match current turn, ignore
+    if (turnId && this.currentTurnId && turnId !== this.currentTurnId) {
+      return;
     }
 
     if (this.audioContext.state === "suspended") {
@@ -184,7 +206,7 @@ export class AudioPlayback extends TypedEventEmitter<AudioPlaybackEvents> {
       currentTime + this.config.bufferAhead
     );
 
-    this.audioQueue.push({ buffer: audioBuffer, startTime });
+    this.audioQueue.push({ buffer: audioBuffer, startTime, turnId });
     this.nextPlayTime = startTime + audioBuffer.duration;
 
     if (!this.isPlaying && !this.isPaused) {
@@ -210,7 +232,127 @@ export class AudioPlayback extends TypedEventEmitter<AudioPlaybackEvents> {
     this.isPlaying = false;
     this.isPaused = false;
     this.nextPlayTime = 0;
+    this.currentSourceTurnId = null;
     this.emit("stop");
+  }
+
+  // ==================== Turn Management ====================
+
+  /**
+   * Set the current turn ID. Audio from other turns will be ignored.
+   * @param turnId - The turn ID to set as current, or null to clear
+   */
+  setCurrentTurn(turnId: string | null): void {
+    this.currentTurnId = turnId;
+  }
+
+  /**
+   * Get the current turn ID
+   */
+  getCurrentTurn(): string | null {
+    return this.currentTurnId;
+  }
+
+  /**
+   * Interrupt the current turn: stop playback, clear buffer, and optionally set a new turn
+   * @param newTurnId - Optional new turn ID to set after interruption
+   * @returns The interrupted turn ID (if any)
+   */
+  interruptTurn(newTurnId?: string): string | null {
+    const interruptedTurnId = this.currentTurnId;
+
+    // Stop current playback
+    if (this.currentSource) {
+      try {
+        this.currentSource.stop();
+      } catch {
+        // Ignore if already stopped
+      }
+      this.currentSource.disconnect();
+      this.currentSource = null;
+    }
+
+    // Clear the queue
+    this.audioQueue = [];
+    this.isPlaying = false;
+    this.isPaused = false;
+    this.nextPlayTime = 0;
+    this.currentSourceTurnId = null;
+
+    // Set new turn if provided
+    if (newTurnId !== undefined) {
+      this.currentTurnId = newTurnId;
+    }
+
+    // Emit events
+    if (interruptedTurnId) {
+      this.emit("turn-interrupted", interruptedTurnId);
+    }
+    this.emit("stop");
+
+    return interruptedTurnId;
+  }
+
+  /**
+   * Clear audio buffer for a specific turn (or all if no turnId provided)
+   * Does not stop currently playing audio unless it's from the specified turn
+   * @param turnId - The turn ID to clear, or undefined to clear all
+   */
+  clearTurnBuffer(turnId?: string): void {
+    if (turnId === undefined) {
+      // Clear all queued audio
+      this.audioQueue = [];
+      this.nextPlayTime = this.audioContext?.currentTime ?? 0;
+    } else {
+      // Clear only audio from specific turn
+      this.audioQueue = this.audioQueue.filter(
+        (item) => item.turnId !== turnId
+      );
+
+      // Recalculate next play time
+      if (this.audioQueue.length > 0) {
+        const lastItem = this.audioQueue[this.audioQueue.length - 1];
+        this.nextPlayTime = lastItem.startTime + lastItem.buffer.duration;
+      } else {
+        this.nextPlayTime = this.audioContext?.currentTime ?? 0;
+      }
+
+      // Stop current source if it's from the cleared turn
+      if (this.currentSourceTurnId === turnId && this.currentSource) {
+        try {
+          this.currentSource.stop();
+        } catch {
+          // Ignore
+        }
+        this.currentSource.disconnect();
+        this.currentSource = null;
+        this.playNext();
+      }
+    }
+  }
+
+  /**
+   * Check if audio for a specific turn should be accepted
+   * @param turnId - The turn ID to check
+   */
+  shouldAcceptTurn(turnId: string): boolean {
+    return this.currentTurnId === null || this.currentTurnId === turnId;
+  }
+
+  /**
+   * Get the number of queued items for a specific turn
+   */
+  getQueuedCountForTurn(turnId: string): number {
+    return this.audioQueue.filter((item) => item.turnId === turnId).length;
+  }
+
+  /**
+   * Get buffered duration for a specific turn
+   */
+  getBufferedDurationForTurn(turnId: string): number {
+    return this.audioQueue
+      .filter((item) => item.turnId === turnId)
+      .reduce((sum, item) => sum + item.buffer.duration, 0);
   }
 
   /**
@@ -390,17 +532,25 @@ export class AudioPlayback extends TypedEventEmitter<AudioPlaybackEvents> {
     if (!this.audioContext || !this.gainNode || this.audioQueue.length === 0) {
       if (this.isPlaying) {
         this.isPlaying = false;
+        this.currentSourceTurnId = null;
         this.emit("ended");
         this.emit("buffer-empty");
       }
       return;
     }
 
-    const { buffer, startTime } = this.audioQueue.shift()!;
+    const { buffer, startTime, turnId } = this.audioQueue.shift()!;
+
+    // Skip if this audio is from an old turn
+    if (turnId && this.currentTurnId && turnId !== this.currentTurnId) {
+      this.playNext();
+      return;
+    }
 
     this.currentSource = this.audioContext.createBufferSource();
     this.currentSource.buffer = buffer;
     this.currentSource.connect(this.gainNode);
+    this.currentSourceTurnId = turnId ?? null;
 
     this.currentSource.onended = () => {
       this.playNext();

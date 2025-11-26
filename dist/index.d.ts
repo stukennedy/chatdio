@@ -78,6 +78,13 @@ interface PlaybackConfig {
     bufferAhead?: number;
 }
 /**
+ * Result from parsing incoming audio, optionally with turn ID
+ */
+interface ParsedAudioResult {
+    data: ArrayBuffer;
+    turnId?: string;
+}
+/**
  * WebSocket bridge configuration
  */
 interface WebSocketConfig {
@@ -97,8 +104,8 @@ interface WebSocketConfig {
     binaryMode?: boolean;
     /** Custom message wrapper for outgoing audio */
     wrapOutgoingAudio?: (data: ArrayBuffer) => string | ArrayBuffer;
-    /** Custom message parser for incoming audio */
-    parseIncomingAudio?: (data: MessageEvent) => ArrayBuffer | null;
+    /** Custom message parser for incoming audio. Return ArrayBuffer or ParsedAudioResult with turnId */
+    parseIncomingAudio?: (data: MessageEvent) => ArrayBuffer | ParsedAudioResult | null;
 }
 /**
  * Activity analyzer configuration
@@ -160,6 +167,12 @@ interface ConversationalAudioEvents {
     "mic:error": (error: Error) => void;
     /** Microphone activity update */
     "mic:activity": (data: AudioActivityData) => void;
+    /** Microphone device was lost/disconnected */
+    "mic:device-lost": () => void;
+    /** Microphone switched to a different device */
+    "mic:device-changed": (deviceId: string) => void;
+    /** Microphone is restarting (after device change or recovery) */
+    "mic:restarting": () => void;
     /** Playback started */
     "playback:start": () => void;
     /** Playback stopped */
@@ -190,6 +203,12 @@ interface ConversationalAudioEvents {
     "device:output-changed": (device: AudioDevice | null) => void;
     /** Device disconnected */
     "device:disconnected": (device: AudioDevice) => void;
+    /** New turn started */
+    "turn:started": (turnId: string, previousTurnId: string | null) => void;
+    /** Turn was interrupted (barge-in) */
+    "turn:interrupted": (turnId: string) => void;
+    /** Turn ended normally */
+    "turn:ended": (turnId: string) => void;
 }
 
 interface ActivityAnalyzerEvents {
@@ -320,6 +339,8 @@ declare class ConversationalAudio extends TypedEventEmitter<ConversationalAudioE
     private isInitialized;
     private isMicActive;
     private config;
+    private currentTurnId;
+    private turnCounter;
     constructor(config?: ConversationalAudioConfig);
     /**
      * Initialize the audio system
@@ -353,8 +374,10 @@ declare class ConversationalAudio extends TypedEventEmitter<ConversationalAudioE
     isMicrophoneMuted(): boolean;
     /**
      * Queue audio data for playback
+     * @param data - PCM audio data
+     * @param turnId - Optional turn ID (uses current turn if not provided)
      */
-    playAudio(data: ArrayBuffer): Promise<void>;
+    playAudio(data: ArrayBuffer, turnId?: string): Promise<void>;
     /**
      * Stop playback and clear queue
      */
@@ -458,10 +481,68 @@ declare class ConversationalAudio extends TypedEventEmitter<ConversationalAudioE
     stopConversation(): void;
     /**
      * Interrupt current playback (useful for barge-in)
+     * @deprecated Use interruptTurn() for turn-aware interruption
      */
     interrupt(): void;
+    /**
+     * Generate a unique turn ID
+     */
+    private generateTurnId;
+    /**
+     * Start a new turn. This will:
+     * - Interrupt any currently playing audio
+     * - Clear the playback buffer
+     * - Set the new turn as current
+     * - Future audio from previous turns will be ignored
+     *
+     * @param turnId - Optional custom turn ID (auto-generated if not provided)
+     * @returns The new turn ID
+     */
+    startTurn(turnId?: string): string;
+    /**
+     * Get the current turn ID
+     */
+    getCurrentTurnId(): string | null;
+    /**
+     * Interrupt the current turn and optionally start a new one
+     * @param startNewTurn - Whether to start a new turn after interruption (default: true)
+     * @returns Object with interrupted turn ID and optionally new turn ID
+     */
+    interruptTurn(startNewTurn?: boolean): {
+        interruptedTurnId: string | null;
+        newTurnId: string | null;
+    };
+    /**
+     * End the current turn without starting a new one
+     * Allows audio to continue playing but won't accept new audio without a turn
+     */
+    endTurn(): string | null;
+    /**
+     * Clear buffered audio for a specific turn or all turns
+     * Does not stop currently playing audio
+     * @param turnId - Specific turn to clear, or undefined for all
+     */
+    clearTurnBuffer(turnId?: string): void;
+    /**
+     * Check if audio for a given turn ID should be accepted
+     * @param turnId - The turn ID to check
+     */
+    shouldAcceptAudioForTurn(turnId: string): boolean;
+    /**
+     * Queue audio only if it matches the current turn
+     * @param data - PCM audio data
+     * @param turnId - Turn ID that this audio belongs to
+     * @returns true if audio was queued, false if ignored due to turn mismatch
+     */
+    playAudioForTurn(data: ArrayBuffer, turnId: string): Promise<boolean>;
     private setupEventForwarding;
     private setupWebSocketEvents;
+    /**
+     * Play audio received from WebSocket with turn validation
+     * @param data - Audio data from WebSocket
+     * @param turnId - Optional turn ID from the message
+     */
+    handleWebSocketAudio(data: ArrayBuffer, turnId?: string): Promise<boolean>;
 }
 
 interface DeviceManagerEvents {
@@ -552,27 +633,51 @@ interface MicrophoneCaptureEvents {
     stop: () => void;
     error: (error: Error) => void;
     level: (level: number) => void;
+    "device-lost": () => void;
+    "device-changed": (deviceId: string) => void;
+    restarting: () => void;
 }
 /**
  * Captures microphone audio with echo cancellation and resampling
  * Cross-browser compatible (Chrome, Firefox, Safari)
+ * Uses AudioWorkletNode when available, falls back to ScriptProcessorNode
  */
 declare class MicrophoneCapture extends TypedEventEmitter<MicrophoneCaptureEvents> {
     private audioContext;
     private mediaStream;
     private sourceNode;
+    private workletNode;
     private processorNode;
     private analyzerNode;
     private isCapturing;
     private config;
+    private useWorklet;
+    private workletBlobUrl;
     private inputSampleRate;
-    private resampleBuffer;
+    private autoRestart;
+    private restartAttempts;
+    private maxRestartAttempts;
+    private restartDelay;
     constructor(config?: MicrophoneConfig);
+    /**
+     * Enable or disable auto-restart on device issues
+     */
+    setAutoRestart(enabled: boolean): void;
+    /**
+     * Check if AudioWorklet is supported
+     */
+    private isWorkletSupported;
     /**
      * Start capturing microphone audio
      * Must be called from a user gesture on Safari/Firefox
      */
     start(): Promise<void>;
+    private startInternal;
+    private setupWorkletNode;
+    private setupScriptProcessorNode;
+    private handleTrackEnded;
+    private handleTrackMuted;
+    private handleAutoRestart;
     /**
      * Stop capturing microphone audio
      */
@@ -583,6 +688,7 @@ declare class MicrophoneCapture extends TypedEventEmitter<MicrophoneCaptureEvent
     isActive(): boolean;
     /**
      * Change the input device
+     * Will seamlessly restart capture with new device
      */
     setDevice(deviceId: string): Promise<void>;
     /**
@@ -605,10 +711,15 @@ declare class MicrophoneCapture extends TypedEventEmitter<MicrophoneCaptureEvent
      * Get target output sample rate
      */
     getOutputSampleRate(): SampleRate;
+    /**
+     * Check if using AudioWorklet (vs deprecated ScriptProcessorNode)
+     */
+    isUsingWorklet(): boolean;
     private handleAudioProcess;
     private calculateLevel;
     private resample;
     private floatTo16BitPCM;
+    private cleanupInternal;
     private cleanup;
 }
 /**
@@ -642,6 +753,7 @@ interface AudioPlaybackEvents {
     level: (level: number) => void;
     "buffer-low": () => void;
     "buffer-empty": () => void;
+    "turn-interrupted": (turnId: string) => void;
 }
 /**
  * Plays audio received from a server with buffering and device management
@@ -661,6 +773,8 @@ declare class AudioPlayback extends TypedEventEmitter<AudioPlaybackEvents> {
     private config;
     private bufferCheckInterval;
     private lowBufferThreshold;
+    private currentTurnId;
+    private currentSourceTurnId;
     constructor(config?: PlaybackConfig);
     /**
      * Initialize the audio playback system
@@ -674,16 +788,53 @@ declare class AudioPlayback extends TypedEventEmitter<AudioPlaybackEvents> {
     /**
      * Queue audio data for playback
      * @param data - PCM audio data (raw bytes)
+     * @param turnId - Optional turn ID to associate with this audio
      */
-    queueAudio(data: ArrayBuffer): Promise<void>;
+    queueAudio(data: ArrayBuffer, turnId?: string): Promise<void>;
     /**
      * Queue pre-decoded AudioBuffer for playback
+     * @param audioBuffer - Pre-decoded AudioBuffer
+     * @param turnId - Optional turn ID to associate with this audio
      */
-    queueAudioBuffer(audioBuffer: AudioBuffer): Promise<void>;
+    queueAudioBuffer(audioBuffer: AudioBuffer, turnId?: string): Promise<void>;
     /**
      * Stop playback and clear queue
      */
     stop(): void;
+    /**
+     * Set the current turn ID. Audio from other turns will be ignored.
+     * @param turnId - The turn ID to set as current, or null to clear
+     */
+    setCurrentTurn(turnId: string | null): void;
+    /**
+     * Get the current turn ID
+     */
+    getCurrentTurn(): string | null;
+    /**
+     * Interrupt the current turn: stop playback, clear buffer, and optionally set a new turn
+     * @param newTurnId - Optional new turn ID to set after interruption
+     * @returns The interrupted turn ID (if any)
+     */
+    interruptTurn(newTurnId?: string): string | null;
+    /**
+     * Clear audio buffer for a specific turn (or all if no turnId provided)
+     * Does not stop currently playing audio unless it's from the specified turn
+     * @param turnId - The turn ID to clear, or undefined to clear all
+     */
+    clearTurnBuffer(turnId?: string): void;
+    /**
+     * Check if audio for a specific turn should be accepted
+     * @param turnId - The turn ID to check
+     */
+    shouldAcceptTurn(turnId: string): boolean;
+    /**
+     * Get the number of queued items for a specific turn
+     */
+    getQueuedCountForTurn(turnId: string): number;
+    /**
+     * Get buffered duration for a specific turn
+     */
+    getBufferedDurationForTurn(turnId: string): number;
     /**
      * Pause playback
      */
@@ -738,7 +889,7 @@ interface WebSocketBridgeEvents {
     disconnected: (code: number, reason: string) => void;
     reconnecting: (attempt: number) => void;
     error: (error: Error) => void;
-    audio: (data: ArrayBuffer) => void;
+    audio: (data: ArrayBuffer, turnId?: string) => void;
     message: (data: unknown) => void;
     "state-change": (state: ConnectionState) => void;
 }
@@ -815,4 +966,16 @@ declare class WebSocketBridge extends TypedEventEmitter<WebSocketBridgeEvents> {
     private base64ToArrayBuffer;
 }
 
-export { ActivityAnalyzer, type ActivityAnalyzerConfig, type AudioActivityData, type AudioDevice, AudioDeviceManager, type AudioFormat, AudioFormatConverter, AudioPlayback, type BitDepth, type ConnectionState, ConversationalAudio, type ConversationalAudioConfig, type ConversationalAudioEvents, type DeviceManagerConfig, MicrophoneCapture, type MicrophoneConfig, type PlaybackConfig, type SampleRate, TypedEventEmitter, VisualizationUtils, WebSocketBridge, type WebSocketConfig };
+/**
+ * AudioWorklet Processor for microphone capture
+ * This runs in a separate audio thread for better performance
+ *
+ * Note: This file needs to be bundled separately or inlined as a Blob URL
+ */
+declare const audioWorkletProcessorCode: string;
+/**
+ * Creates a Blob URL for the AudioWorklet processor
+ */
+declare function createWorkletBlobUrl(): string;
+
+export { ActivityAnalyzer, type ActivityAnalyzerConfig, type AudioActivityData, type AudioDevice, AudioDeviceManager, type AudioFormat, AudioFormatConverter, AudioPlayback, type BitDepth, type ConnectionState, ConversationalAudio, type ConversationalAudioConfig, type ConversationalAudioEvents, type DeviceManagerConfig, MicrophoneCapture, type MicrophoneConfig, type ParsedAudioResult, type PlaybackConfig, type SampleRate, TypedEventEmitter, VisualizationUtils, WebSocketBridge, type WebSocketConfig, audioWorkletProcessorCode, createWorkletBlobUrl };

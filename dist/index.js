@@ -1,37 +1,3 @@
-"use strict";
-var __defProp = Object.defineProperty;
-var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
-var __getOwnPropNames = Object.getOwnPropertyNames;
-var __hasOwnProp = Object.prototype.hasOwnProperty;
-var __export = (target, all) => {
-  for (var name in all)
-    __defProp(target, name, { get: all[name], enumerable: true });
-};
-var __copyProps = (to, from, except, desc) => {
-  if (from && typeof from === "object" || typeof from === "function") {
-    for (let key of __getOwnPropNames(from))
-      if (!__hasOwnProp.call(to, key) && key !== except)
-        __defProp(to, key, { get: () => from[key], enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable });
-  }
-  return to;
-};
-var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
-
-// src/index.ts
-var index_exports = {};
-__export(index_exports, {
-  ActivityAnalyzer: () => ActivityAnalyzer,
-  AudioDeviceManager: () => AudioDeviceManager,
-  AudioFormatConverter: () => AudioFormatConverter,
-  AudioPlayback: () => AudioPlayback,
-  ConversationalAudio: () => ConversationalAudio,
-  MicrophoneCapture: () => MicrophoneCapture,
-  TypedEventEmitter: () => TypedEventEmitter,
-  VisualizationUtils: () => VisualizationUtils,
-  WebSocketBridge: () => WebSocketBridge
-});
-module.exports = __toCommonJS(index_exports);
-
 // src/EventEmitter.ts
 var TypedEventEmitter = class {
   constructor() {
@@ -279,6 +245,64 @@ var AudioDeviceManager = class extends TypedEventEmitter {
   }
 };
 
+// src/audio-worklet-processor.ts
+var js = String.raw;
+var audioWorkletProcessorCode = js`
+class MicrophoneProcessor extends AudioWorkletProcessor {
+  constructor() {
+    super();
+    this.bufferSize = 2048;
+    this.buffer = new Float32Array(this.bufferSize);
+    this.bufferIndex = 0;
+  }
+
+  process(inputs, outputs, parameters) {
+    const input = inputs[0];
+    if (!input || !input[0]) {
+      return true;
+    }
+
+    const inputChannel = input[0];
+    
+    // Accumulate samples into buffer
+    for (let i = 0; i < inputChannel.length; i++) {
+      this.buffer[this.bufferIndex++] = inputChannel[i];
+      
+      if (this.bufferIndex >= this.bufferSize) {
+        // Send buffer to main thread
+        this.port.postMessage({
+          type: 'audio',
+          buffer: this.buffer.slice(),
+        });
+        this.bufferIndex = 0;
+      }
+    }
+
+    // Calculate RMS level for this frame
+    let sum = 0;
+    for (let i = 0; i < inputChannel.length; i++) {
+      sum += inputChannel[i] * inputChannel[i];
+    }
+    const level = Math.sqrt(sum / inputChannel.length);
+    
+    this.port.postMessage({
+      type: 'level',
+      level: level,
+    });
+
+    return true;
+  }
+}
+
+registerProcessor('microphone-processor', MicrophoneProcessor);
+`;
+function createWorkletBlobUrl() {
+  const blob = new Blob([audioWorkletProcessorCode], {
+    type: "application/javascript"
+  });
+  return URL.createObjectURL(blob);
+}
+
 // src/MicrophoneCapture.ts
 var MicrophoneCapture = class extends TypedEventEmitter {
   constructor(config = {}) {
@@ -286,12 +310,32 @@ var MicrophoneCapture = class extends TypedEventEmitter {
     this.audioContext = null;
     this.mediaStream = null;
     this.sourceNode = null;
+    this.workletNode = null;
     this.processorNode = null;
     this.analyzerNode = null;
     this.isCapturing = false;
+    this.useWorklet = false;
+    this.workletBlobUrl = null;
     // For resampling
     this.inputSampleRate = 48e3;
-    this.resampleBuffer = [];
+    // Auto-restart on device issues
+    this.autoRestart = true;
+    this.restartAttempts = 0;
+    this.maxRestartAttempts = 3;
+    this.restartDelay = 500;
+    this.handleTrackEnded = () => {
+      console.warn("Audio track ended (device disconnected)");
+      this.emit("device-lost");
+      if (this.autoRestart && this.isCapturing) {
+        this.handleAutoRestart();
+      }
+    };
+    this.handleTrackMuted = () => {
+      const track = this.mediaStream?.getAudioTracks()[0];
+      if (track && track.readyState === "ended") {
+        this.handleTrackEnded();
+      }
+    };
     this.handleAudioProcess = (event) => {
       if (!this.isCapturing) return;
       const inputData = event.inputBuffer.getChannelData(0);
@@ -311,6 +355,18 @@ var MicrophoneCapture = class extends TypedEventEmitter {
     };
   }
   /**
+   * Enable or disable auto-restart on device issues
+   */
+  setAutoRestart(enabled) {
+    this.autoRestart = enabled;
+  }
+  /**
+   * Check if AudioWorklet is supported
+   */
+  isWorkletSupported() {
+    return typeof AudioWorkletNode !== "undefined" && typeof AudioContext !== "undefined" && "audioWorklet" in AudioContext.prototype;
+  }
+  /**
    * Start capturing microphone audio
    * Must be called from a user gesture on Safari/Firefox
    */
@@ -318,6 +374,10 @@ var MicrophoneCapture = class extends TypedEventEmitter {
     if (this.isCapturing) {
       return;
     }
+    this.restartAttempts = 0;
+    await this.startInternal();
+  }
+  async startInternal() {
     try {
       const AudioContextClass = window.AudioContext || window.webkitAudioContext;
       if (!AudioContextClass) {
@@ -334,27 +394,35 @@ var MicrophoneCapture = class extends TypedEventEmitter {
           echoCancellation: { ideal: this.config.echoCancellation },
           noiseSuppression: { ideal: this.config.noiseSuppression },
           autoGainControl: { ideal: this.config.autoGainControl }
-          // Note: sampleRate constraint is not well supported, we'll resample manually
         }
       };
       this.mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
+      const audioTrack = this.mediaStream.getAudioTracks()[0];
+      if (audioTrack) {
+        audioTrack.onended = () => this.handleTrackEnded();
+        audioTrack.onmute = () => this.handleTrackMuted();
+      }
       this.sourceNode = this.audioContext.createMediaStreamSource(
         this.mediaStream
       );
       this.analyzerNode = this.audioContext.createAnalyser();
       this.analyzerNode.fftSize = 256;
       this.analyzerNode.smoothingTimeConstant = 0.3;
-      this.processorNode = this.audioContext.createScriptProcessor(
-        this.config.bufferSize,
-        1,
-        // mono input
-        1
-        // mono output
-      );
-      this.processorNode.onaudioprocess = this.handleAudioProcess;
-      this.sourceNode.connect(this.analyzerNode);
-      this.analyzerNode.connect(this.processorNode);
-      this.processorNode.connect(this.audioContext.destination);
+      if (this.isWorkletSupported()) {
+        try {
+          await this.setupWorkletNode();
+          this.useWorklet = true;
+        } catch {
+          console.warn(
+            "AudioWorklet setup failed, falling back to ScriptProcessorNode"
+          );
+          this.setupScriptProcessorNode();
+          this.useWorklet = false;
+        }
+      } else {
+        this.setupScriptProcessorNode();
+        this.useWorklet = false;
+      }
       this.isCapturing = true;
       this.emit("start");
     } catch (error) {
@@ -362,6 +430,75 @@ var MicrophoneCapture = class extends TypedEventEmitter {
       const err = error instanceof Error ? error : new Error(String(error));
       this.emit("error", err);
       throw err;
+    }
+  }
+  async setupWorkletNode() {
+    if (!this.audioContext || !this.sourceNode || !this.analyzerNode) {
+      throw new Error("Audio context not ready");
+    }
+    if (!this.workletBlobUrl) {
+      this.workletBlobUrl = createWorkletBlobUrl();
+    }
+    await this.audioContext.audioWorklet.addModule(this.workletBlobUrl);
+    this.workletNode = new AudioWorkletNode(
+      this.audioContext,
+      "microphone-processor"
+    );
+    this.workletNode.port.onmessage = (event) => {
+      if (!this.isCapturing) return;
+      if (event.data.type === "audio") {
+        const floatData = event.data.buffer;
+        const resampledData = this.resample(floatData);
+        const pcmData = this.floatTo16BitPCM(resampledData);
+        this.emit("data", pcmData.buffer);
+      } else if (event.data.type === "level") {
+        this.emit("level", event.data.level);
+      }
+    };
+    this.sourceNode.connect(this.analyzerNode);
+    this.analyzerNode.connect(this.workletNode);
+    this.workletNode.connect(this.audioContext.destination);
+  }
+  setupScriptProcessorNode() {
+    if (!this.audioContext || !this.sourceNode || !this.analyzerNode) {
+      throw new Error("Audio context not ready");
+    }
+    this.processorNode = this.audioContext.createScriptProcessor(
+      this.config.bufferSize,
+      1,
+      // mono input
+      1
+      // mono output
+    );
+    this.processorNode.onaudioprocess = this.handleAudioProcess;
+    this.sourceNode.connect(this.analyzerNode);
+    this.analyzerNode.connect(this.processorNode);
+    this.processorNode.connect(this.audioContext.destination);
+  }
+  async handleAutoRestart() {
+    if (this.restartAttempts >= this.maxRestartAttempts) {
+      console.error("Max restart attempts reached");
+      this.emit(
+        "error",
+        new Error("Device lost and could not reconnect after multiple attempts")
+      );
+      this.stop();
+      return;
+    }
+    this.restartAttempts++;
+    this.emit("restarting");
+    this.cleanupInternal();
+    await new Promise((resolve) => setTimeout(resolve, this.restartDelay));
+    try {
+      const previousDeviceId = this.config.deviceId;
+      this.config.deviceId = "";
+      await this.startInternal();
+      if (previousDeviceId) {
+        this.emit("device-changed", "default");
+      }
+    } catch (error) {
+      console.error("Failed to restart after device loss:", error);
+      this.handleAutoRestart();
     }
   }
   /**
@@ -383,12 +520,16 @@ var MicrophoneCapture = class extends TypedEventEmitter {
   }
   /**
    * Change the input device
+   * Will seamlessly restart capture with new device
    */
   async setDevice(deviceId) {
+    const wasCapturing = this.isCapturing;
     this.config.deviceId = deviceId;
-    if (this.isCapturing) {
-      this.stop();
-      await this.start();
+    if (wasCapturing) {
+      this.emit("restarting");
+      this.cleanupInternal();
+      await this.startInternal();
+      this.emit("device-changed", deviceId);
     }
   }
   /**
@@ -404,8 +545,9 @@ var MicrophoneCapture = class extends TypedEventEmitter {
     const needsRestart = this.isCapturing && (config.deviceId !== void 0 || config.echoCancellation !== void 0 || config.noiseSuppression !== void 0 || config.autoGainControl !== void 0);
     Object.assign(this.config, config);
     if (needsRestart) {
-      this.stop();
-      await this.start();
+      this.emit("restarting");
+      this.cleanupInternal();
+      await this.startInternal();
     }
   }
   /**
@@ -425,6 +567,12 @@ var MicrophoneCapture = class extends TypedEventEmitter {
    */
   getOutputSampleRate() {
     return this.config.sampleRate;
+  }
+  /**
+   * Check if using AudioWorklet (vs deprecated ScriptProcessorNode)
+   */
+  isUsingWorklet() {
+    return this.useWorklet;
   }
   calculateLevel(data) {
     let sum = 0;
@@ -459,7 +607,12 @@ var MicrophoneCapture = class extends TypedEventEmitter {
     }
     return output;
   }
-  cleanup() {
+  cleanupInternal() {
+    if (this.workletNode) {
+      this.workletNode.port.onmessage = null;
+      this.workletNode.disconnect();
+      this.workletNode = null;
+    }
     if (this.processorNode) {
       this.processorNode.disconnect();
       this.processorNode.onaudioprocess = null;
@@ -474,17 +627,25 @@ var MicrophoneCapture = class extends TypedEventEmitter {
       this.sourceNode = null;
     }
     if (this.mediaStream) {
-      this.mediaStream.getTracks().forEach((track) => track.stop());
+      this.mediaStream.getTracks().forEach((track) => {
+        track.onended = null;
+        track.onmute = null;
+        track.stop();
+      });
       this.mediaStream = null;
     }
-    if (this.audioContext) {
-      if (this.audioContext.state !== "closed") {
-        this.audioContext.close().catch(() => {
-        });
-      }
-      this.audioContext = null;
+    if (this.audioContext && this.audioContext.state !== "closed") {
+      this.audioContext.close().catch(() => {
+      });
     }
-    this.resampleBuffer = [];
+    this.audioContext = null;
+  }
+  cleanup() {
+    this.cleanupInternal();
+    if (this.workletBlobUrl) {
+      URL.revokeObjectURL(this.workletBlobUrl);
+      this.workletBlobUrl = null;
+    }
   }
 };
 var AudioFormatConverter = class _AudioFormatConverter {
@@ -597,7 +758,6 @@ var AudioFormatConverter = class _AudioFormatConverter {
 
 // src/AudioPlayback.ts
 var AudioPlayback = class extends TypedEventEmitter {
-  // seconds
   constructor(config = {}) {
     super();
     this.audioContext = null;
@@ -613,6 +773,10 @@ var AudioPlayback = class extends TypedEventEmitter {
     // For buffer management
     this.bufferCheckInterval = null;
     this.lowBufferThreshold = 0.5;
+    // seconds
+    // Turn management
+    this.currentTurnId = null;
+    this.currentSourceTurnId = null;
     this.config = {
       sampleRate: config.sampleRate ?? 16e3,
       bitDepth: config.bitDepth ?? 16,
@@ -681,10 +845,14 @@ var AudioPlayback = class extends TypedEventEmitter {
   /**
    * Queue audio data for playback
    * @param data - PCM audio data (raw bytes)
+   * @param turnId - Optional turn ID to associate with this audio
    */
-  async queueAudio(data) {
+  async queueAudio(data, turnId) {
     if (!this.audioContext || !this.gainNode) {
       throw new Error("AudioPlayback not initialized");
+    }
+    if (turnId && this.currentTurnId && turnId !== this.currentTurnId) {
+      return;
     }
     if (this.audioContext.state === "suspended") {
       await this.audioContext.resume();
@@ -695,7 +863,7 @@ var AudioPlayback = class extends TypedEventEmitter {
       this.nextPlayTime,
       currentTime + this.config.bufferAhead
     );
-    this.audioQueue.push({ buffer: audioBuffer, startTime });
+    this.audioQueue.push({ buffer: audioBuffer, startTime, turnId });
     this.nextPlayTime = startTime + audioBuffer.duration;
     if (!this.isPlaying && !this.isPaused) {
       this.playNext();
@@ -703,10 +871,15 @@ var AudioPlayback = class extends TypedEventEmitter {
   }
   /**
    * Queue pre-decoded AudioBuffer for playback
+   * @param audioBuffer - Pre-decoded AudioBuffer
+   * @param turnId - Optional turn ID to associate with this audio
    */
-  async queueAudioBuffer(audioBuffer) {
+  async queueAudioBuffer(audioBuffer, turnId) {
     if (!this.audioContext || !this.gainNode) {
       throw new Error("AudioPlayback not initialized");
+    }
+    if (turnId && this.currentTurnId && turnId !== this.currentTurnId) {
+      return;
     }
     if (this.audioContext.state === "suspended") {
       await this.audioContext.resume();
@@ -716,7 +889,7 @@ var AudioPlayback = class extends TypedEventEmitter {
       this.nextPlayTime,
       currentTime + this.config.bufferAhead
     );
-    this.audioQueue.push({ buffer: audioBuffer, startTime });
+    this.audioQueue.push({ buffer: audioBuffer, startTime, turnId });
     this.nextPlayTime = startTime + audioBuffer.duration;
     if (!this.isPlaying && !this.isPaused) {
       this.playNext();
@@ -738,7 +911,100 @@ var AudioPlayback = class extends TypedEventEmitter {
     this.isPlaying = false;
     this.isPaused = false;
     this.nextPlayTime = 0;
+    this.currentSourceTurnId = null;
     this.emit("stop");
+  }
+  // ==================== Turn Management ====================
+  /**
+   * Set the current turn ID. Audio from other turns will be ignored.
+   * @param turnId - The turn ID to set as current, or null to clear
+   */
+  setCurrentTurn(turnId) {
+    this.currentTurnId = turnId;
+  }
+  /**
+   * Get the current turn ID
+   */
+  getCurrentTurn() {
+    return this.currentTurnId;
+  }
+  /**
+   * Interrupt the current turn: stop playback, clear buffer, and optionally set a new turn
+   * @param newTurnId - Optional new turn ID to set after interruption
+   * @returns The interrupted turn ID (if any)
+   */
+  interruptTurn(newTurnId) {
+    const interruptedTurnId = this.currentTurnId;
+    if (this.currentSource) {
+      try {
+        this.currentSource.stop();
+      } catch {
+      }
+      this.currentSource.disconnect();
+      this.currentSource = null;
+    }
+    this.audioQueue = [];
+    this.isPlaying = false;
+    this.isPaused = false;
+    this.nextPlayTime = 0;
+    this.currentSourceTurnId = null;
+    if (newTurnId !== void 0) {
+      this.currentTurnId = newTurnId;
+    }
+    if (interruptedTurnId) {
+      this.emit("turn-interrupted", interruptedTurnId);
+    }
+    this.emit("stop");
+    return interruptedTurnId;
+  }
+  /**
+   * Clear audio buffer for a specific turn (or all if no turnId provided)
+   * Does not stop currently playing audio unless it's from the specified turn
+   * @param turnId - The turn ID to clear, or undefined to clear all
+   */
+  clearTurnBuffer(turnId) {
+    if (turnId === void 0) {
+      this.audioQueue = [];
+      this.nextPlayTime = this.audioContext?.currentTime ?? 0;
+    } else {
+      this.audioQueue = this.audioQueue.filter(
+        (item) => item.turnId !== turnId
+      );
+      if (this.audioQueue.length > 0) {
+        const lastItem = this.audioQueue[this.audioQueue.length - 1];
+        this.nextPlayTime = lastItem.startTime + lastItem.buffer.duration;
+      } else {
+        this.nextPlayTime = this.audioContext?.currentTime ?? 0;
+      }
+      if (this.currentSourceTurnId === turnId && this.currentSource) {
+        try {
+          this.currentSource.stop();
+        } catch {
+        }
+        this.currentSource.disconnect();
+        this.currentSource = null;
+        this.playNext();
+      }
+    }
+  }
+  /**
+   * Check if audio for a specific turn should be accepted
+   * @param turnId - The turn ID to check
+   */
+  shouldAcceptTurn(turnId) {
+    return this.currentTurnId === null || this.currentTurnId === turnId;
+  }
+  /**
+   * Get the number of queued items for a specific turn
+   */
+  getQueuedCountForTurn(turnId) {
+    return this.audioQueue.filter((item) => item.turnId === turnId).length;
+  }
+  /**
+   * Get buffered duration for a specific turn
+   */
+  getBufferedDurationForTurn(turnId) {
+    return this.audioQueue.filter((item) => item.turnId === turnId).reduce((sum, item) => sum + item.buffer.duration, 0);
   }
   /**
    * Pause playback
@@ -872,15 +1138,21 @@ var AudioPlayback = class extends TypedEventEmitter {
     if (!this.audioContext || !this.gainNode || this.audioQueue.length === 0) {
       if (this.isPlaying) {
         this.isPlaying = false;
+        this.currentSourceTurnId = null;
         this.emit("ended");
         this.emit("buffer-empty");
       }
       return;
     }
-    const { buffer, startTime } = this.audioQueue.shift();
+    const { buffer, startTime, turnId } = this.audioQueue.shift();
+    if (turnId && this.currentTurnId && turnId !== this.currentTurnId) {
+      this.playNext();
+      return;
+    }
     this.currentSource = this.audioContext.createBufferSource();
     this.currentSource.buffer = buffer;
     this.currentSource.connect(this.gainNode);
+    this.currentSourceTurnId = turnId ?? null;
     this.currentSource.onended = () => {
       this.playNext();
     };
@@ -1132,11 +1404,15 @@ var WebSocketBridge = class extends TypedEventEmitter {
   }
   handleMessage(event) {
     try {
-      let audioData = null;
       if (this.config.parseIncomingAudio) {
-        audioData = this.config.parseIncomingAudio(event);
-        if (audioData) {
-          this.emit("audio", audioData);
+        const result = this.config.parseIncomingAudio(event);
+        if (result) {
+          if (result instanceof ArrayBuffer) {
+            this.emit("audio", result);
+          } else if (typeof result === "object" && "data" in result) {
+            const parsed = result;
+            this.emit("audio", parsed.data, parsed.turnId);
+          }
           return;
         }
         this.emitNonAudioMessage(event.data);
@@ -1150,8 +1426,8 @@ var WebSocketBridge = class extends TypedEventEmitter {
         try {
           const parsed = JSON.parse(event.data);
           if (parsed.type === "audio" && parsed.data) {
-            audioData = this.base64ToArrayBuffer(parsed.data);
-            this.emit("audio", audioData);
+            const audioData = this.base64ToArrayBuffer(parsed.data);
+            this.emit("audio", audioData, parsed.turnId);
             return;
           }
           if (parsed.type === "pong") {
@@ -1553,6 +1829,9 @@ var ConversationalAudio = class extends TypedEventEmitter {
     this.websocket = null;
     this.isInitialized = false;
     this.isMicActive = false;
+    // Turn management
+    this.currentTurnId = null;
+    this.turnCounter = 0;
     /**
      * Set microphone mute state (still captures but doesn't send)
      */
@@ -1646,12 +1925,15 @@ var ConversationalAudio = class extends TypedEventEmitter {
   // ==================== Playback Methods ====================
   /**
    * Queue audio data for playback
+   * @param data - PCM audio data
+   * @param turnId - Optional turn ID (uses current turn if not provided)
    */
-  async playAudio(data) {
+  async playAudio(data, turnId) {
     if (!this.isInitialized) {
       await this.initialize();
     }
-    await this.playback.queueAudio(data);
+    const effectiveTurnId = turnId ?? this.currentTurnId ?? void 0;
+    await this.playback.queueAudio(data, effectiveTurnId);
     const analyzerNode = this.playback.getAnalyzerNode();
     if (analyzerNode && !this.playbackAnalyzer.isActive()) {
       this.playbackAnalyzer.connect(analyzerNode);
@@ -1845,15 +2127,123 @@ var ConversationalAudio = class extends TypedEventEmitter {
   }
   /**
    * Interrupt current playback (useful for barge-in)
+   * @deprecated Use interruptTurn() for turn-aware interruption
    */
   interrupt() {
     this.stopPlayback();
+  }
+  // ==================== Turn Management ====================
+  /**
+   * Generate a unique turn ID
+   */
+  generateTurnId() {
+    this.turnCounter++;
+    return `turn_${Date.now()}_${this.turnCounter}`;
+  }
+  /**
+   * Start a new turn. This will:
+   * - Interrupt any currently playing audio
+   * - Clear the playback buffer
+   * - Set the new turn as current
+   * - Future audio from previous turns will be ignored
+   *
+   * @param turnId - Optional custom turn ID (auto-generated if not provided)
+   * @returns The new turn ID
+   */
+  startTurn(turnId) {
+    const newTurnId = turnId ?? this.generateTurnId();
+    const previousTurnId = this.currentTurnId;
+    this.playback.interruptTurn(newTurnId);
+    this.currentTurnId = newTurnId;
+    this.emit("turn:started", newTurnId, previousTurnId);
+    return newTurnId;
+  }
+  /**
+   * Get the current turn ID
+   */
+  getCurrentTurnId() {
+    return this.currentTurnId;
+  }
+  /**
+   * Interrupt the current turn and optionally start a new one
+   * @param startNewTurn - Whether to start a new turn after interruption (default: true)
+   * @returns Object with interrupted turn ID and optionally new turn ID
+   */
+  interruptTurn(startNewTurn = true) {
+    const interruptedTurnId = this.currentTurnId;
+    this.playback.interruptTurn();
+    if (interruptedTurnId) {
+      this.emit("turn:interrupted", interruptedTurnId);
+    }
+    let newTurnId = null;
+    if (startNewTurn) {
+      newTurnId = this.startTurn();
+    } else {
+      this.currentTurnId = null;
+    }
+    return { interruptedTurnId, newTurnId };
+  }
+  /**
+   * End the current turn without starting a new one
+   * Allows audio to continue playing but won't accept new audio without a turn
+   */
+  endTurn() {
+    const endedTurnId = this.currentTurnId;
+    this.currentTurnId = null;
+    this.playback.setCurrentTurn(null);
+    if (endedTurnId) {
+      this.emit("turn:ended", endedTurnId);
+    }
+    return endedTurnId;
+  }
+  /**
+   * Clear buffered audio for a specific turn or all turns
+   * Does not stop currently playing audio
+   * @param turnId - Specific turn to clear, or undefined for all
+   */
+  clearTurnBuffer(turnId) {
+    this.playback.clearTurnBuffer(turnId);
+  }
+  /**
+   * Check if audio for a given turn ID should be accepted
+   * @param turnId - The turn ID to check
+   */
+  shouldAcceptAudioForTurn(turnId) {
+    return this.currentTurnId === null || this.currentTurnId === turnId;
+  }
+  /**
+   * Queue audio only if it matches the current turn
+   * @param data - PCM audio data
+   * @param turnId - Turn ID that this audio belongs to
+   * @returns true if audio was queued, false if ignored due to turn mismatch
+   */
+  async playAudioForTurn(data, turnId) {
+    if (!this.shouldAcceptAudioForTurn(turnId)) {
+      return false;
+    }
+    await this.playAudio(data, turnId);
+    return true;
   }
   // ==================== Private Methods ====================
   setupEventForwarding() {
     this.microphone.on("start", () => this.emit("mic:start"));
     this.microphone.on("stop", () => this.emit("mic:stop"));
     this.microphone.on("error", (error) => this.emit("mic:error", error));
+    this.microphone.on("device-lost", () => {
+      this.emit("mic:device-lost");
+    });
+    this.microphone.on("device-changed", (deviceId) => {
+      this.emit("mic:device-changed", deviceId);
+      const analyzerNode = this.microphone.getAnalyzerNode();
+      if (analyzerNode) {
+        this.micAnalyzer.disconnect();
+        this.micAnalyzer.connect(analyzerNode);
+        this.micAnalyzer.start();
+      }
+    });
+    this.microphone.on("restarting", () => {
+      this.emit("mic:restarting");
+    });
     this.microphone.on("data", (data) => {
       this.emit("mic:data", data);
       if (this.websocket && !this.micMuted) {
@@ -1873,18 +2263,25 @@ var ConversationalAudio = class extends TypedEventEmitter {
       "devices-changed",
       (devices) => this.emit("device:changed", devices)
     );
-    this.deviceManager.on(
-      "input-changed",
-      (device) => this.emit("device:input-changed", device)
-    );
-    this.deviceManager.on(
-      "output-changed",
-      (device) => this.emit("device:output-changed", device)
-    );
-    this.deviceManager.on(
-      "device-disconnected",
-      (device) => this.emit("device:disconnected", device)
-    );
+    this.deviceManager.on("input-changed", (device) => {
+      this.emit("device:input-changed", device);
+      if (this.isMicActive && device) {
+        this.microphone.setDevice(device.deviceId).catch((err) => {
+          this.emit("mic:error", err);
+        });
+      }
+    });
+    this.deviceManager.on("output-changed", (device) => {
+      this.emit("device:output-changed", device);
+      if (device) {
+        this.playback.setOutputDevice(device.deviceId).catch((err) => {
+          this.emit("playback:error", err);
+        });
+      }
+    });
+    this.deviceManager.on("device-disconnected", (device) => {
+      this.emit("device:disconnected", device);
+    });
     if (this.websocket) {
       this.setupWebSocketEvents();
     }
@@ -1902,18 +2299,37 @@ var ConversationalAudio = class extends TypedEventEmitter {
     );
     this.websocket.on("error", (error) => this.emit("ws:error", error));
     this.websocket.on("message", (data) => this.emit("ws:message", data));
-    this.websocket.on("audio", async (data) => {
+    this.websocket.on("audio", async (data, turnId) => {
       this.emit("ws:audio", data);
+      if (turnId && !this.shouldAcceptAudioForTurn(turnId)) {
+        return;
+      }
       try {
-        await this.playAudio(data);
+        await this.playAudio(data, turnId);
       } catch (error) {
         this.emit("playback:error", error);
       }
     });
   }
+  /**
+   * Play audio received from WebSocket with turn validation
+   * @param data - Audio data from WebSocket
+   * @param turnId - Optional turn ID from the message
+   */
+  async handleWebSocketAudio(data, turnId) {
+    if (turnId && !this.shouldAcceptAudioForTurn(turnId)) {
+      return false;
+    }
+    try {
+      await this.playAudio(data, turnId);
+      return true;
+    } catch (error) {
+      this.emit("playback:error", error);
+      return false;
+    }
+  }
 };
-// Annotate the CommonJS export names for ESM import in node:
-0 && (module.exports = {
+export {
   ActivityAnalyzer,
   AudioDeviceManager,
   AudioFormatConverter,
@@ -1922,5 +2338,7 @@ var ConversationalAudio = class extends TypedEventEmitter {
   MicrophoneCapture,
   TypedEventEmitter,
   VisualizationUtils,
-  WebSocketBridge
-});
+  WebSocketBridge,
+  audioWorkletProcessorCode,
+  createWorkletBlobUrl
+};

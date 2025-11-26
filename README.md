@@ -85,8 +85,15 @@ const audio = new ConversationalAudio({
 await audio.initialize();      // Initialize (from user gesture)
 await audio.startConversation(); // Start mic + websocket
 audio.stopConversation();      // Stop mic + playback
-audio.interrupt();             // Stop playback only (barge-in)
 audio.dispose();               // Cleanup resources
+
+// Turn management (barge-in / interruption)
+const turnId = audio.startTurn();           // Start new turn, interrupt any playing audio
+audio.interruptTurn();                       // Interrupt current turn, start new one
+audio.interruptTurn(false);                  // Interrupt without starting new turn
+audio.getCurrentTurnId();                    // Get current turn ID
+audio.clearTurnBuffer(turnId);               // Clear buffered audio for a turn
+await audio.playAudioForTurn(data, turnId);  // Play only if turn is current
 
 // Device selection
 audio.getInputDevices();       // List microphones
@@ -312,6 +319,91 @@ const barHeights = VisualizationUtils.createBarHeights(data.frequencyData, 16, 1
 | `device:input-changed` | `AudioDevice \| null` | Input device changed |
 | `device:output-changed` | `AudioDevice \| null` | Output device changed |
 | `device:disconnected` | `AudioDevice` | Device disconnected |
+| `turn:started` | `turnId, previousTurnId` | New turn started |
+| `turn:interrupted` | `turnId` | Turn was interrupted (barge-in) |
+| `turn:ended` | `turnId` | Turn ended normally |
+
+## Turn Management (Barge-in)
+
+Turn management allows you to handle conversation interruptions cleanly. When the user speaks while the AI is responding (barge-in), you can:
+
+1. Stop current playback immediately
+2. Clear any buffered audio
+3. Ignore any late-arriving audio from the interrupted turn
+
+```typescript
+// Start a conversation turn when AI begins responding
+const turnId = audio.startTurn();
+console.log('Started turn:', turnId);
+
+// When user interrupts (detected via voice activity or button)
+audio.on('mic:activity', (data) => {
+  if (data.isSpeaking && audio.isPlaybackActive()) {
+    // User is speaking while AI is talking - barge-in!
+    const { interruptedTurnId, newTurnId } = audio.interruptTurn();
+    console.log('Interrupted turn:', interruptedTurnId);
+    console.log('New turn:', newTurnId);
+  }
+});
+
+// Server sends audio with turn ID
+audio.on('ws:message', async (message) => {
+  if (message.type === 'audio') {
+    // Only play if turn matches - old audio is automatically ignored
+    const played = await audio.playAudioForTurn(message.data, message.turnId);
+    if (!played) {
+      console.log('Ignored audio from old turn:', message.turnId);
+    }
+  }
+});
+
+// Listen for turn events
+audio.on('turn:started', (turnId, previousTurnId) => {
+  console.log('Turn started:', turnId, 'Previous:', previousTurnId);
+});
+
+audio.on('turn:interrupted', (turnId) => {
+  console.log('Turn interrupted:', turnId);
+  // Notify server to stop generating audio for this turn
+  audio.sendMessage({ type: 'interrupt', turnId });
+});
+
+audio.on('turn:ended', (turnId) => {
+  console.log('Turn ended naturally:', turnId);
+});
+```
+
+### Server-Side Turn ID Support
+
+When your server sends audio, include a `turnId` in JSON messages:
+
+```json
+{
+  "type": "audio",
+  "data": "base64_encoded_audio...",
+  "turnId": "turn_123456789_1"
+}
+```
+
+Or use a custom parser to extract the turn ID:
+
+```typescript
+const audio = new ConversationalAudio({
+  websocket: {
+    url: 'wss://your-server.com/audio',
+    parseIncomingAudio: (event) => {
+      const msg = JSON.parse(event.data);
+      if (msg.type === 'audio') {
+        return {
+          data: base64ToArrayBuffer(msg.audio),
+          turnId: msg.turn_id,  // Your server's turn ID field
+        };
+      }
+      return null;
+    },
+  },
+});
+```
 
 ## Type Definitions
 
