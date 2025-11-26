@@ -63,7 +63,7 @@ Open http://localhost:3000 in your browser and click "Initialize Audio" to begin
 │  │  ┌─────────────────────────────────────┐  │  │
 │  │  │             main.js                  │  │  │
 │  │  │  ┌───────────────────────────────┐  │  │  │
-│  │  │  │    ConversationalAudio        │  │  │  │
+│  │  │  │    Chatdio        │  │  │  │
 │  │  │  │  ┌─────────┐ ┌─────────────┐  │  │  │  │
 │  │  │  │  │   Mic   │ │  Playback   │  │  │  │  │
 │  │  │  │  └────┬────┘ └──────┬──────┘  │  │  │  │
@@ -88,9 +88,9 @@ Open http://localhost:3000 in your browser and click "Initialize Audio" to begin
 ### Basic Usage
 
 ```javascript
-import { ConversationalAudio } from 'chatdio';
+import { Chatdio } from 'chatdio';
 
-const audio = new ConversationalAudio({
+const audio = new Chatdio({
   microphone: { sampleRate: 16000, echoCancellation: true },
   playback: { sampleRate: 24000 },
 });

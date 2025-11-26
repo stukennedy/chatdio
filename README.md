@@ -21,10 +21,10 @@ npm install chatdio
 ## Quick Start
 
 ```typescript
-import { ConversationalAudio } from 'chatdio';
+import { Chatdio } from 'chatdio';
 
 // Create instance with configuration
-const audio = new ConversationalAudio({
+const audio = new Chatdio({
   microphone: {
     sampleRate: 16000,
     echoCancellation: true,
@@ -68,12 +68,12 @@ audio.on('ws:message', (message) => {
 
 ## Core Components
 
-### ConversationalAudio
+### Chatdio
 
 The main orchestrator that ties everything together.
 
 ```typescript
-const audio = new ConversationalAudio({
+const audio = new Chatdio({
   microphone: { /* MicrophoneConfig */ },
   playback: { /* PlaybackConfig */ },
   websocket: { /* WebSocketConfig */ },
@@ -295,7 +295,7 @@ const barHeights = VisualizationUtils.createBarHeights(data.frequencyData, 16, 1
 
 ## Events
 
-### ConversationalAudio Events
+### Chatdio Events
 
 | Event | Payload | Description |
 |-------|---------|-------------|
@@ -388,7 +388,7 @@ When your server sends audio, include a `turnId` in JSON messages:
 Or use a custom parser to extract the turn ID:
 
 ```typescript
-const audio = new ConversationalAudio({
+const audio = new Chatdio({
   websocket: {
     url: 'wss://your-server.com/audio',
     parseIncomingAudio: (event) => {

@@ -146,7 +146,7 @@ export type ConnectionState =
 /**
  * Main library configuration
  */
-export interface ConversationalAudioConfig {
+export interface ChatdioConfig {
   /** Microphone configuration */
   microphone?: MicrophoneConfig;
   /** Playback configuration */
@@ -162,7 +162,7 @@ export interface ConversationalAudioConfig {
 /**
  * Event types emitted by the library
  */
-export interface ConversationalAudioEvents {
+export interface ChatdioEvents {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   [key: string]: (...args: any[]) => void;
   /** Microphone audio data ready to send */

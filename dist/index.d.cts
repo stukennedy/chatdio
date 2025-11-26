@@ -140,7 +140,7 @@ type ConnectionState = "disconnected" | "connecting" | "connected" | "reconnecti
 /**
  * Main library configuration
  */
-interface ConversationalAudioConfig {
+interface ChatdioConfig {
     /** Microphone configuration */
     microphone?: MicrophoneConfig;
     /** Playback configuration */
@@ -155,7 +155,7 @@ interface ConversationalAudioConfig {
 /**
  * Event types emitted by the library
  */
-interface ConversationalAudioEvents {
+interface ChatdioEvents {
     [key: string]: (...args: any[]) => void;
     /** Microphone audio data ready to send */
     "mic:data": (data: ArrayBuffer) => void;
@@ -329,7 +329,7 @@ declare class VisualizationUtils {
  * Manages microphone capture, audio playback, WebSocket streaming,
  * and real-time activity visualization
  */
-declare class ConversationalAudio extends TypedEventEmitter<ConversationalAudioEvents> {
+declare class Chatdio extends TypedEventEmitter<ChatdioEvents> {
     private deviceManager;
     private microphone;
     private playback;
@@ -341,7 +341,7 @@ declare class ConversationalAudio extends TypedEventEmitter<ConversationalAudioE
     private config;
     private currentTurnId;
     private turnCounter;
-    constructor(config?: ConversationalAudioConfig);
+    constructor(config?: ChatdioConfig);
     /**
      * Initialize the audio system
      * Must be called from a user gesture (click/touch) for browser compatibility
@@ -1002,4 +1002,4 @@ declare const audioWorkletProcessorCode: string;
  */
 declare function createWorkletBlobUrl(): string;
 
-export { ActivityAnalyzer, type ActivityAnalyzerConfig, type AudioActivityData, type AudioDevice, AudioDeviceManager, type AudioFormat, AudioFormatConverter, AudioPlayback, type BitDepth, type ConnectionState, ConversationalAudio, type ConversationalAudioConfig, type ConversationalAudioEvents, type DeviceManagerConfig, MicrophoneCapture, type MicrophoneConfig, type ParsedAudioResult, type PlaybackConfig, type SampleRate, TypedEventEmitter, VisualizationUtils, WebSocketBridge, type WebSocketConfig, audioWorkletProcessorCode, createWorkletBlobUrl };
+export { ActivityAnalyzer, type ActivityAnalyzerConfig, type AudioActivityData, type AudioDevice, AudioDeviceManager, type AudioFormat, AudioFormatConverter, AudioPlayback, type BitDepth, Chatdio, type ChatdioConfig, type ChatdioEvents, type ConnectionState, type DeviceManagerConfig, MicrophoneCapture, type MicrophoneConfig, type ParsedAudioResult, type PlaybackConfig, type SampleRate, TypedEventEmitter, VisualizationUtils, WebSocketBridge, type WebSocketConfig, audioWorkletProcessorCode, createWorkletBlobUrl };

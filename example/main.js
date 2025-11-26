@@ -11,8 +11,8 @@
  */
 
 // Import from the built library
-// In a real project: import { ConversationalAudio } from 'chatdio';
-import { ConversationalAudio, VisualizationUtils } from "/dist/index.js";
+// In a real project: import { Chatdio } from 'chatdio';
+import { Chatdio, VisualizationUtils } from "/dist/index.js";
 
 // DOM Elements
 const elements = {
@@ -53,8 +53,8 @@ const elements = {
   logContainer: document.getElementById("logContainer"),
 };
 
-// Create the ConversationalAudio instance
-const audio = new ConversationalAudio({
+// Create the Chatdio instance
+const audio = new Chatdio({
   microphone: {
     sampleRate: 16000,
     echoCancellation: true,

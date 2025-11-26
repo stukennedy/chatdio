@@ -5,8 +5,8 @@ import { AudioPlayback } from "./AudioPlayback";
 import { WebSocketBridge } from "./WebSocketBridge";
 import { ActivityAnalyzer } from "./ActivityAnalyzer";
 import type {
-  ConversationalAudioConfig,
-  ConversationalAudioEvents,
+  ChatdioConfig,
+  ChatdioEvents,
   AudioDevice,
   AudioActivityData,
   ConnectionState,
@@ -17,7 +17,7 @@ import type {
  * Manages microphone capture, audio playback, WebSocket streaming,
  * and real-time activity visualization
  */
-export class ConversationalAudio extends TypedEventEmitter<ConversationalAudioEvents> {
+export class Chatdio extends TypedEventEmitter<ChatdioEvents> {
   private deviceManager: AudioDeviceManager;
   private microphone: MicrophoneCapture;
   private playback: AudioPlayback;
@@ -27,13 +27,13 @@ export class ConversationalAudio extends TypedEventEmitter<ConversationalAudioEv
 
   private isInitialized = false;
   private isMicActive = false;
-  private config: ConversationalAudioConfig;
+  private config: ChatdioConfig;
 
   // Turn management
   private currentTurnId: string | null = null;
   private turnCounter = 0;
 
-  constructor(config: ConversationalAudioConfig = {}) {
+  constructor(config: ChatdioConfig = {}) {
     super();
     this.config = config;
 
@@ -686,7 +686,7 @@ export class ConversationalAudio extends TypedEventEmitter<ConversationalAudioEv
       // If turnId provided, check if it should be accepted
       if (turnId && !this.shouldAcceptAudioForTurn(turnId)) {
         console.log(
-          `[ConversationalAudio] Ignoring audio for old turn: ${turnId} (current: ${this.currentTurnId})`
+          `[Chatdio] Ignoring audio for old turn: ${turnId} (current: ${this.currentTurnId})`
         );
         return;
       }

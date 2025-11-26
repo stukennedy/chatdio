@@ -1,5 +1,5 @@
 // Main orchestrator
-export { ConversationalAudio } from "./ConversationalAudio";
+export { Chatdio } from "./Chatdio";
 
 // Core components
 export { AudioDeviceManager } from "./AudioDeviceManager";
@@ -28,7 +28,7 @@ export type {
   ActivityAnalyzerConfig,
   AudioActivityData,
   ConnectionState,
-  ConversationalAudioConfig,
-  ConversationalAudioEvents,
+  ChatdioConfig,
+  ChatdioEvents,
   ParsedAudioResult,
 } from "./types";

@@ -24,7 +24,7 @@ __export(index_exports, {
   AudioDeviceManager: () => AudioDeviceManager,
   AudioFormatConverter: () => AudioFormatConverter,
   AudioPlayback: () => AudioPlayback,
-  ConversationalAudio: () => ConversationalAudio,
+  Chatdio: () => Chatdio,
   MicrophoneCapture: () => MicrophoneCapture,
   TypedEventEmitter: () => TypedEventEmitter,
   VisualizationUtils: () => VisualizationUtils,
@@ -1858,8 +1858,8 @@ var VisualizationUtils = class {
   }
 };
 
-// src/ConversationalAudio.ts
-var ConversationalAudio = class extends TypedEventEmitter {
+// src/Chatdio.ts
+var Chatdio = class extends TypedEventEmitter {
   constructor(config = {}) {
     super();
     this.websocket = null;
@@ -2376,7 +2376,7 @@ var ConversationalAudio = class extends TypedEventEmitter {
       this.emit("ws:audio", data, turnId);
       if (turnId && !this.shouldAcceptAudioForTurn(turnId)) {
         console.log(
-          `[ConversationalAudio] Ignoring audio for old turn: ${turnId} (current: ${this.currentTurnId})`
+          `[Chatdio] Ignoring audio for old turn: ${turnId} (current: ${this.currentTurnId})`
         );
         return;
       }
@@ -2411,7 +2411,7 @@ var ConversationalAudio = class extends TypedEventEmitter {
   AudioDeviceManager,
   AudioFormatConverter,
   AudioPlayback,
-  ConversationalAudio,
+  Chatdio,
   MicrophoneCapture,
   TypedEventEmitter,
   VisualizationUtils,
