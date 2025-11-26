@@ -469,6 +469,14 @@ export class ConversationalAudio extends TypedEventEmitter<ConversationalAudioEv
     // Emit interrupted event
     if (interruptedTurnId) {
       this.emit("turn:interrupted", interruptedTurnId);
+
+      // Notify server about the interruption
+      if (this.websocket?.isConnected()) {
+        this.websocket.sendMessage({
+          type: "interrupt",
+          turnId: interruptedTurnId,
+        });
+      }
     }
 
     // Start new turn if requested
@@ -627,10 +635,13 @@ export class ConversationalAudio extends TypedEventEmitter<ConversationalAudioEv
 
     // Auto-play received audio (with turn management)
     this.websocket.on("audio", async (data, turnId?: string) => {
-      this.emit("ws:audio", data);
+      this.emit("ws:audio", data, turnId);
 
       // If turnId provided, check if it should be accepted
       if (turnId && !this.shouldAcceptAudioForTurn(turnId)) {
+        console.log(
+          `[ConversationalAudio] Ignoring audio for old turn: ${turnId} (current: ${this.currentTurnId})`
+        );
         return;
       }
 

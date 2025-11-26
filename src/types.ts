@@ -201,8 +201,8 @@ export interface ConversationalAudioEvents {
   "ws:reconnecting": (attempt: number) => void;
   /** WebSocket error */
   "ws:error": (error: Error) => void;
-  /** WebSocket received audio */
-  "ws:audio": (data: ArrayBuffer) => void;
+  /** WebSocket received audio (turnId may be undefined if server doesn't send it) */
+  "ws:audio": (data: ArrayBuffer, turnId?: string) => void;
   /** WebSocket received non-audio message */
   "ws:message": (data: unknown) => void;
 

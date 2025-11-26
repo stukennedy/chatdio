@@ -32,6 +32,14 @@ app.get(
   "/audio",
   upgradeWebSocket((c) => {
     let currentTurnId = null;
+    let pendingTimeouts = []; // Track pending audio sends
+
+    // Clear all pending audio when interrupted
+    function clearPendingAudio() {
+      console.log(`🗑️ Clearing ${pendingTimeouts.length} pending audio chunks`);
+      pendingTimeouts.forEach((timeout) => clearTimeout(timeout));
+      pendingTimeouts = [];
+    }
 
     return {
       onOpen(evt, ws) {
@@ -55,20 +63,34 @@ app.get(
           if (data instanceof ArrayBuffer || data instanceof Buffer) {
             console.log("🎤 Received binary audio:", data.byteLength, "bytes");
 
-            // Create a turn if needed
+            // Capture turn ID for this audio chunk (before it might change)
+            // Use client's turn ID if set, otherwise generate one
             if (!currentTurnId) {
               turnCounter++;
               currentTurnId = `server_turn_${Date.now()}_${turnCounter}`;
             }
+            const audioTurnId = currentTurnId;
 
-            // Echo back after 2 second delay (simulating AI processing)
-            setTimeout(() => {
+            // Echo back after 2 second delay with turn ID
+            // Client uses turn ID to filter interrupted audio
+            const base64Audio = Buffer.from(data).toString("base64");
+            const timeoutId = setTimeout(() => {
               try {
-                ws.send(data);
+                ws.send(
+                  JSON.stringify({
+                    type: "audio",
+                    data: base64Audio,
+                    turnId: audioTurnId,
+                  })
+                );
+                pendingTimeouts = pendingTimeouts.filter(
+                  (t) => t !== timeoutId
+                );
               } catch {
                 // Connection may have closed
               }
             }, 2000);
+            pendingTimeouts.push(timeoutId);
             return;
           }
 
@@ -82,9 +104,17 @@ app.get(
             return;
           }
 
-          // Handle interrupt
+          // Handle turn:start - client tells us their turn ID
+          if (message.type === "turn:start") {
+            console.log("🔄 Client started turn:", message.turnId);
+            currentTurnId = message.turnId;
+            return;
+          }
+
+          // Handle interrupt - clear all pending audio!
           if (message.type === "interrupt") {
             console.log("⚡ Turn interrupted:", message.turnId);
+            clearPendingAudio();
             currentTurnId = null;
             return;
           }
@@ -98,7 +128,8 @@ app.get(
             }
 
             // Echo back with turn ID after 2 second delay
-            setTimeout(() => {
+            // Track the timeout so we can cancel it on interrupt
+            const timeoutId = setTimeout(() => {
               try {
                 ws.send(
                   JSON.stringify({
@@ -107,10 +138,14 @@ app.get(
                     turnId: currentTurnId,
                   })
                 );
+                pendingTimeouts = pendingTimeouts.filter(
+                  (t) => t !== timeoutId
+                );
               } catch {
                 // Connection may have closed
               }
             }, 2000);
+            pendingTimeouts.push(timeoutId);
             return;
           }
 
@@ -129,6 +164,7 @@ app.get(
 
       onClose(evt, ws) {
         console.log("🔌 Client disconnected");
+        clearPendingAudio();
         currentTurnId = null;
       },
 

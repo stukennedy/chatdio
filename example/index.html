@@ -325,6 +325,62 @@
         text-decoration: line-through;
       }
 
+      /* Toggle Switch */
+      .toggle-switch {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        cursor: pointer;
+        font-size: 0.875rem;
+      }
+
+      .toggle-switch input {
+        display: none;
+      }
+
+      .toggle-slider {
+        width: 40px;
+        height: 22px;
+        background: var(--bg-tertiary);
+        border-radius: 11px;
+        position: relative;
+        transition: background 0.2s;
+        border: 1px solid var(--border);
+      }
+
+      .toggle-slider::after {
+        content: "";
+        position: absolute;
+        width: 16px;
+        height: 16px;
+        background: var(--text-muted);
+        border-radius: 50%;
+        top: 2px;
+        left: 2px;
+        transition: transform 0.2s, background 0.2s;
+      }
+
+      .toggle-switch input:checked + .toggle-slider {
+        background: var(--accent-primary);
+        border-color: var(--accent-primary);
+      }
+
+      .toggle-switch input:checked + .toggle-slider::after {
+        transform: translateX(18px);
+        background: white;
+      }
+
+      .toggle-label {
+        color: var(--text-secondary);
+      }
+
+      .barge-in-hint {
+        font-size: 0.8rem;
+        color: var(--text-muted);
+        margin-bottom: 1rem;
+        line-height: 1.4;
+      }
+
       /* Log */
       .log-container {
         background: var(--bg-tertiary);
@@ -579,6 +635,11 @@
       <div class="card">
         <div class="card-header">
           <span class="card-title">Turn Management</span>
+          <label class="toggle-switch">
+            <input type="checkbox" id="bargeInToggle" checked />
+            <span class="toggle-slider"></span>
+            <span class="toggle-label">Auto Barge-in</span>
+          </label>
         </div>
         <div class="controls" style="margin-bottom: 1rem">
           <button class="btn-secondary" id="startTurnBtn" disabled>
@@ -591,6 +652,10 @@
             Play Test Tone
           </button>
         </div>
+        <p class="barge-in-hint">
+          When enabled, speaking while audio plays will automatically interrupt
+          playback and start a new turn.
+        </p>
         <div class="turn-info" id="turnInfo">
           <span style="color: var(--text-muted)">No active turn</span>
         </div>

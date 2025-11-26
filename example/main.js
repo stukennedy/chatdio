@@ -47,6 +47,7 @@ const elements = {
 
   // Turn info
   turnInfo: document.getElementById("turnInfo"),
+  bargeInToggle: document.getElementById("bargeInToggle"),
 
   // Log
   logContainer: document.getElementById("logContainer"),
@@ -62,7 +63,7 @@ const audio = new ConversationalAudio({
     bufferSize: 2048,
   },
   playback: {
-    sampleRate: 24000,
+    sampleRate: 16000, // Match microphone sample rate for echo demo
     bitDepth: 16,
     channels: 1,
   },
@@ -74,10 +75,52 @@ const audio = new ConversationalAudio({
     smoothingTimeConstant: 0.8,
     updateInterval: 50,
   },
+  websocket: {
+    // Parse incoming audio messages - handle binary or JSON with turnId
+    parseIncomingAudio: (event) => {
+      // Binary audio - return directly (no turn ID from server = accept all)
+      if (event.data instanceof ArrayBuffer) {
+        return { data: event.data };
+      }
+      if (event.data instanceof Blob) {
+        // Will be handled by default binary handler
+        return null;
+      }
+      // JSON audio with optional turn ID
+      if (typeof event.data === "string") {
+        try {
+          const message = JSON.parse(event.data);
+          if (message.type === "audio" && message.data) {
+            // Decode base64 audio
+            const binaryString = atob(message.data);
+            const bytes = new Uint8Array(binaryString.length);
+            for (let i = 0; i < binaryString.length; i++) {
+              bytes[i] = binaryString.charCodeAt(i);
+            }
+            return {
+              data: bytes.buffer,
+              turnId: message.turnId, // May be undefined
+            };
+          }
+        } catch {
+          // Not JSON audio, ignore
+        }
+      }
+      return null;
+    },
+  },
 });
 
 // Track turns for display
 const turnHistory = [];
+
+// Track interrupted turn IDs to filter their audio
+const interruptedTurnIds = new Set();
+
+// Barge-in state
+let bargeInEnabled = true;
+let lastSpeakingState = false;
+let bargeInCooldown = false;
 
 // ==================== Logging ====================
 
@@ -120,6 +163,35 @@ audio.on("mic:activity", (data) => {
 
   // Draw waveform
   drawWaveform(elements.micCanvas, data.timeDomainData, "#6366f1");
+
+  // Barge-in detection: if user starts speaking while playback is active
+  if (bargeInEnabled && !bargeInCooldown) {
+    const justStartedSpeaking = data.isSpeaking && !lastSpeakingState;
+    const isPlaybackActive = audio.isPlaybackActive();
+
+    if (justStartedSpeaking && isPlaybackActive) {
+      log("⚡ Barge-in detected! Interrupting playback...", "event");
+
+      // Interrupt the current turn and start a new one
+      const result = audio.interruptTurn();
+      if (result.interruptedTurnId) {
+        log(
+          `Interrupted turn ${result.interruptedTurnId.slice(
+            -8
+          )}, new turn: ${result.newTurnId.slice(-8)}`,
+          "event"
+        );
+      }
+
+      // Brief cooldown to prevent rapid interrupts
+      bargeInCooldown = true;
+      setTimeout(() => {
+        bargeInCooldown = false;
+      }, 500);
+    }
+  }
+
+  lastSpeakingState = data.isSpeaking;
 });
 
 // Microphone device events
@@ -208,10 +280,20 @@ audio.on("turn:started", (turnId, previousTurnId) => {
   log(`🔄 Turn started: ${turnId}`, "event");
   turnHistory.push({ id: turnId, status: "active" });
   updateTurnDisplay();
+
+  // Tell server about our new turn ID so it can tag audio with it
+  if (audio.isWebSocketConnected()) {
+    audio.sendMessage({
+      type: "turn:start",
+      turnId: turnId,
+    });
+  }
 });
 
 audio.on("turn:interrupted", (turnId) => {
   log(`⚡ Turn interrupted: ${turnId}`, "error");
+  // Track this turn ID so we can ignore its audio
+  interruptedTurnIds.add(turnId);
   const turn = turnHistory.find((t) => t.id === turnId);
   if (turn) turn.status = "interrupted";
   updateTurnDisplay();
@@ -418,6 +500,10 @@ elements.connectBtn.addEventListener("click", async () => {
   try {
     updateConnectionStatus("connecting");
     await audio.connectWebSocket(url);
+
+    // Start a turn when connected
+    const turnId = audio.startTurn();
+    log(`Session started with turn: ${turnId.slice(-8)}`, "event");
   } catch (error) {
     log(`Connection failed: ${error.message}`, "error");
     updateConnectionStatus("error");
@@ -499,6 +585,12 @@ elements.volumeSlider.addEventListener("input", () => {
   const volume = elements.volumeSlider.value / 100;
   audio.setVolume(volume);
   elements.volumeValue.textContent = `${elements.volumeSlider.value}%`;
+});
+
+// Barge-in toggle
+elements.bargeInToggle.addEventListener("change", () => {
+  bargeInEnabled = elements.bargeInToggle.checked;
+  log(`Auto barge-in ${bargeInEnabled ? "enabled" : "disabled"}`, "event");
 });
 
 // ==================== Initialization ====================

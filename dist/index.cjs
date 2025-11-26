@@ -2210,6 +2210,12 @@ var ConversationalAudio = class extends TypedEventEmitter {
     this.playback.interruptTurn();
     if (interruptedTurnId) {
       this.emit("turn:interrupted", interruptedTurnId);
+      if (this.websocket?.isConnected()) {
+        this.websocket.sendMessage({
+          type: "interrupt",
+          turnId: interruptedTurnId
+        });
+      }
     }
     let newTurnId = null;
     if (startNewTurn) {
@@ -2336,8 +2342,11 @@ var ConversationalAudio = class extends TypedEventEmitter {
     this.websocket.on("error", (error) => this.emit("ws:error", error));
     this.websocket.on("message", (data) => this.emit("ws:message", data));
     this.websocket.on("audio", async (data, turnId) => {
-      this.emit("ws:audio", data);
+      this.emit("ws:audio", data, turnId);
       if (turnId && !this.shouldAcceptAudioForTurn(turnId)) {
+        console.log(
+          `[ConversationalAudio] Ignoring audio for old turn: ${turnId} (current: ${this.currentTurnId})`
+        );
         return;
       }
       try {
