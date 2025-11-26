@@ -1,7 +1,7 @@
 /**
  * Conversational Audio Demo
  *
- * This example demonstrates all the key features of the conversational-audio library:
+ * This example demonstrates all the key features of the chatdio library:
  * - Microphone capture with echo cancellation
  * - Audio playback with buffering
  * - Device selection
@@ -11,7 +11,7 @@
  */
 
 // Import from the built library
-// In a real project: import { ConversationalAudio } from 'conversational-audio';
+// In a real project: import { ConversationalAudio } from 'chatdio';
 import { ConversationalAudio, VisualizationUtils } from "/dist/index.js";
 
 // DOM Elements

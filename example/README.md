@@ -1,6 +1,6 @@
 # Conversational Audio Example
 
-A complete demo showing all features of the `conversational-audio` library.
+A complete demo showing all features of the `chatdio` library.
 
 ## Quick Start
 
@@ -88,7 +88,7 @@ Open http://localhost:3000 in your browser and click "Initialize Audio" to begin
 ### Basic Usage
 
 ```javascript
-import { ConversationalAudio } from 'conversational-audio';
+import { ConversationalAudio } from 'chatdio';
 
 const audio = new ConversationalAudio({
   microphone: { sampleRate: 16000, echoCancellation: true },

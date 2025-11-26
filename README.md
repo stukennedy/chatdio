@@ -1,4 +1,4 @@
-# conversational-audio
+# chatdio
 
 A modern Web Audio library for building conversational AI interfaces. Handles microphone capture, audio playback, device management, WebSocket streaming, and real-time visualization — all with cross-browser support (Chrome, Firefox, Safari).
 
@@ -15,13 +15,13 @@ A modern Web Audio library for building conversational AI interfaces. Handles mi
 ## Installation
 
 ```bash
-npm install conversational-audio
+npm install chatdio
 ```
 
 ## Quick Start
 
 ```typescript
-import { ConversationalAudio } from 'conversational-audio';
+import { ConversationalAudio } from 'chatdio';
 
 // Create instance with configuration
 const audio = new ConversationalAudio({
@@ -115,7 +115,7 @@ audio.isMicrophoneMuted();
 Standalone microphone capture with resampling and format conversion.
 
 ```typescript
-import { MicrophoneCapture } from 'conversational-audio';
+import { MicrophoneCapture } from 'chatdio';
 
 const mic = new MicrophoneCapture({
   sampleRate: 16000,          // Output sample rate
@@ -144,7 +144,7 @@ mic.stop();
 Buffered audio playback with queue management.
 
 ```typescript
-import { AudioPlayback } from 'conversational-audio';
+import { AudioPlayback } from 'chatdio';
 
 const playback = new AudioPlayback({
   sampleRate: 24000,
@@ -179,7 +179,7 @@ playback.setVolume(0.8);
 Device enumeration with change detection.
 
 ```typescript
-import { AudioDeviceManager } from 'conversational-audio';
+import { AudioDeviceManager } from 'chatdio';
 
 const deviceManager = new AudioDeviceManager({
   autoFallback: true,    // Auto-switch on device disconnect
@@ -216,7 +216,7 @@ if (!deviceManager.isOutputSelectionSupported()) {
 WebSocket connection with auto-reconnection.
 
 ```typescript
-import { WebSocketBridge } from 'conversational-audio';
+import { WebSocketBridge } from 'chatdio';
 
 const ws = new WebSocketBridge({
   url: 'wss://ai-server.com/audio',
@@ -260,7 +260,7 @@ ws.disconnect();
 Real-time audio analysis for visualizations.
 
 ```typescript
-import { ActivityAnalyzer, VisualizationUtils } from 'conversational-audio';
+import { ActivityAnalyzer, VisualizationUtils } from 'chatdio';
 
 const analyzer = new ActivityAnalyzer({
   fftSize: 256,
