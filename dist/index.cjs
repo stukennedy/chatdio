@@ -2201,16 +2201,47 @@ var ConversationalAudio = class extends TypedEventEmitter {
     return this.currentTurnId;
   }
   /**
+   * Set the current turn ID (for server-controlled turn management)
+   *
+   * Use this when the server tells the client which turn to accept.
+   * Audio with matching turn IDs will be played, others will be filtered.
+   *
+   * @param turnId - The turn ID to accept, or null to accept all
+   * @param options - Configuration options
+   * @param options.clearBuffer - Whether to clear buffered audio from other turns (default: true)
+   * @param options.emitEvent - Whether to emit turn:started event (default: false for server-controlled)
+   */
+  setCurrentTurn(turnId, options = {}) {
+    const { clearBuffer = true, emitEvent = false } = options;
+    const previousTurnId = this.currentTurnId;
+    this.currentTurnId = turnId;
+    this.playback.setCurrentTurn(turnId);
+    if (clearBuffer && turnId !== previousTurnId) {
+      this.playback.clearTurnBuffer();
+    }
+    if (emitEvent && turnId && turnId !== previousTurnId) {
+      this.emit("turn:started", turnId, previousTurnId);
+    }
+  }
+  /**
    * Interrupt the current turn and optionally start a new one
-   * @param startNewTurn - Whether to start a new turn after interruption (default: true)
+   *
+   * For client-controlled turns (like our demo), this sends an interrupt message to the server.
+   * For server-controlled turns, set notifyServer: false and handle server notification yourself.
+   *
+   * @param options - Configuration options
+   * @param options.startNewTurn - Whether to start a new turn after interruption (default: true)
+   * @param options.notifyServer - Whether to send interrupt message to server (default: true)
    * @returns Object with interrupted turn ID and optionally new turn ID
    */
-  interruptTurn(startNewTurn = true) {
+  interruptTurn(options = true) {
+    const opts = typeof options === "boolean" ? { startNewTurn: options, notifyServer: true } : { startNewTurn: true, notifyServer: true, ...options };
+    const { startNewTurn, notifyServer } = opts;
     const interruptedTurnId = this.currentTurnId;
     this.playback.interruptTurn();
     if (interruptedTurnId) {
       this.emit("turn:interrupted", interruptedTurnId);
-      if (this.websocket?.isConnected()) {
+      if (notifyServer && this.websocket?.isConnected()) {
         this.websocket.sendMessage({
           type: "interrupt",
           turnId: interruptedTurnId
