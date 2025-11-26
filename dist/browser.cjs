@@ -17,9 +17,9 @@ var __copyProps = (to, from, except, desc) => {
 };
 var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
-// src/index.ts
-var index_exports = {};
-__export(index_exports, {
+// src/browser.ts
+var browser_exports = {};
+__export(browser_exports, {
   ActivityAnalyzer: () => ActivityAnalyzer,
   AudioDeviceManager: () => AudioDeviceManager,
   AudioFormatConverter: () => AudioFormatConverter,
@@ -34,9 +34,10 @@ __export(index_exports, {
   base64ToArrayBuffer: () => base64ToArrayBuffer,
   base64ToUint8Array: () => base64ToUint8Array,
   createWorkletBlobUrl: () => createWorkletBlobUrl,
+  default: () => browser_default,
   uint8ArrayToBase64: () => uint8ArrayToBase64
 });
-module.exports = __toCommonJS(index_exports);
+module.exports = __toCommonJS(browser_exports);
 
 // src/EventEmitter.ts
 var TypedEventEmitter = class {
@@ -2442,6 +2443,34 @@ function base64ToUint8Array(base64) {
   }
   return bytes;
 }
+
+// src/browser.ts
+var ConversationalAudio = {
+  // Main orchestrator
+  Chatdio,
+  // Core components
+  AudioDeviceManager,
+  MicrophoneCapture,
+  AudioFormatConverter,
+  AudioPlayback,
+  WebSocketBridge,
+  ActivityAnalyzer,
+  VisualizationUtils,
+  // Audio worklet
+  createWorkletBlobUrl,
+  audioWorkletProcessorCode,
+  // Utilities
+  arrayBufferToBase64,
+  base64ToArrayBuffer,
+  uint8ArrayToBase64,
+  base64ToUint8Array,
+  // Event emitter
+  TypedEventEmitter
+};
+if (typeof window !== "undefined") {
+  window.ConversationalAudio = ConversationalAudio;
+}
+var browser_default = ConversationalAudio;
 // Annotate the CommonJS export names for ESM import in node:
 0 && (module.exports = {
   ActivityAnalyzer,

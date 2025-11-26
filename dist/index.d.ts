@@ -1002,4 +1002,32 @@ declare const audioWorkletProcessorCode: string;
  */
 declare function createWorkletBlobUrl(): string;
 
-export { ActivityAnalyzer, type ActivityAnalyzerConfig, type AudioActivityData, type AudioDevice, AudioDeviceManager, type AudioFormat, AudioFormatConverter, AudioPlayback, type BitDepth, Chatdio, type ChatdioConfig, type ChatdioEvents, type ConnectionState, type DeviceManagerConfig, MicrophoneCapture, type MicrophoneConfig, type ParsedAudioResult, type PlaybackConfig, type SampleRate, TypedEventEmitter, VisualizationUtils, WebSocketBridge, type WebSocketConfig, audioWorkletProcessorCode, createWorkletBlobUrl };
+/**
+ * Utility functions for conversational-audio library
+ */
+/**
+ * Convert an ArrayBuffer to a base64 string
+ * @param buffer - The ArrayBuffer to convert
+ * @returns Base64 encoded string
+ */
+declare function arrayBufferToBase64(buffer: ArrayBuffer): string;
+/**
+ * Convert a base64 string to an ArrayBuffer
+ * @param base64 - The base64 string to convert
+ * @returns ArrayBuffer containing the decoded data
+ */
+declare function base64ToArrayBuffer(base64: string): ArrayBuffer;
+/**
+ * Convert a Uint8Array to a base64 string
+ * @param bytes - The Uint8Array to convert
+ * @returns Base64 encoded string
+ */
+declare function uint8ArrayToBase64(bytes: Uint8Array): string;
+/**
+ * Convert a base64 string to a Uint8Array
+ * @param base64 - The base64 string to convert
+ * @returns Uint8Array containing the decoded data
+ */
+declare function base64ToUint8Array(base64: string): Uint8Array;
+
+export { ActivityAnalyzer, type ActivityAnalyzerConfig, type AudioActivityData, type AudioDevice, AudioDeviceManager, type AudioFormat, AudioFormatConverter, AudioPlayback, type BitDepth, Chatdio, type ChatdioConfig, type ChatdioEvents, type ConnectionState, type DeviceManagerConfig, MicrophoneCapture, type MicrophoneConfig, type ParsedAudioResult, type PlaybackConfig, type SampleRate, TypedEventEmitter, VisualizationUtils, WebSocketBridge, type WebSocketConfig, arrayBufferToBase64, audioWorkletProcessorCode, base64ToArrayBuffer, base64ToUint8Array, createWorkletBlobUrl, uint8ArrayToBase64 };

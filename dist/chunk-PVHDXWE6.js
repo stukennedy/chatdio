@@ -1,43 +1,3 @@
-"use strict";
-var __defProp = Object.defineProperty;
-var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
-var __getOwnPropNames = Object.getOwnPropertyNames;
-var __hasOwnProp = Object.prototype.hasOwnProperty;
-var __export = (target, all) => {
-  for (var name in all)
-    __defProp(target, name, { get: all[name], enumerable: true });
-};
-var __copyProps = (to, from, except, desc) => {
-  if (from && typeof from === "object" || typeof from === "function") {
-    for (let key of __getOwnPropNames(from))
-      if (!__hasOwnProp.call(to, key) && key !== except)
-        __defProp(to, key, { get: () => from[key], enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable });
-  }
-  return to;
-};
-var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
-
-// src/index.ts
-var index_exports = {};
-__export(index_exports, {
-  ActivityAnalyzer: () => ActivityAnalyzer,
-  AudioDeviceManager: () => AudioDeviceManager,
-  AudioFormatConverter: () => AudioFormatConverter,
-  AudioPlayback: () => AudioPlayback,
-  Chatdio: () => Chatdio,
-  MicrophoneCapture: () => MicrophoneCapture,
-  TypedEventEmitter: () => TypedEventEmitter,
-  VisualizationUtils: () => VisualizationUtils,
-  WebSocketBridge: () => WebSocketBridge,
-  arrayBufferToBase64: () => arrayBufferToBase64,
-  audioWorkletProcessorCode: () => audioWorkletProcessorCode,
-  base64ToArrayBuffer: () => base64ToArrayBuffer,
-  base64ToUint8Array: () => base64ToUint8Array,
-  createWorkletBlobUrl: () => createWorkletBlobUrl,
-  uint8ArrayToBase64: () => uint8ArrayToBase64
-});
-module.exports = __toCommonJS(index_exports);
-
 // src/EventEmitter.ts
 var TypedEventEmitter = class {
   constructor() {
@@ -2442,21 +2402,21 @@ function base64ToUint8Array(base64) {
   }
   return bytes;
 }
-// Annotate the CommonJS export names for ESM import in node:
-0 && (module.exports = {
-  ActivityAnalyzer,
+
+export {
+  TypedEventEmitter,
   AudioDeviceManager,
+  audioWorkletProcessorCode,
+  createWorkletBlobUrl,
+  MicrophoneCapture,
   AudioFormatConverter,
   AudioPlayback,
-  Chatdio,
-  MicrophoneCapture,
-  TypedEventEmitter,
-  VisualizationUtils,
   WebSocketBridge,
+  ActivityAnalyzer,
+  VisualizationUtils,
+  Chatdio,
   arrayBufferToBase64,
-  audioWorkletProcessorCode,
   base64ToArrayBuffer,
-  base64ToUint8Array,
-  createWorkletBlobUrl,
-  uint8ArrayToBase64
-});
+  uint8ArrayToBase64,
+  base64ToUint8Array
+};

@@ -12,6 +12,14 @@ export {
   audioWorkletProcessorCode,
 } from "./audio-worklet-processor";
 
+// Utilities
+export {
+  arrayBufferToBase64,
+  base64ToArrayBuffer,
+  uint8ArrayToBase64,
+  base64ToUint8Array,
+} from "./utils";
+
 // Event emitter
 export { TypedEventEmitter } from "./EventEmitter";
 
