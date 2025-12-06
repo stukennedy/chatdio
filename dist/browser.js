@@ -14,7 +14,7 @@ import {
   base64ToUint8Array,
   createWorkletBlobUrl,
   uint8ArrayToBase64
-} from "./chunk-PVHDXWE6.js";
+} from "./chunk-ITILR253.js";
 
 // src/browser.ts
 var ConversationalAudio = {

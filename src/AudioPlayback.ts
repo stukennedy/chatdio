@@ -60,7 +60,17 @@ export class AudioPlayback extends TypedEventEmitter<AudioPlaybackEvents> {
 
   /**
    * Initialize the audio playback system
-   * Should be called from a user gesture for Safari/Firefox
+   *
+   * Note: Unlike microphone access, AudioContext playback does NOT require
+   * a user gesture at the exact moment of initialization. It only requires
+   * that SOME user interaction has occurred on the page at some point.
+   *
+   * In typical conversational AI apps, the user will have clicked a button
+   * to connect/start, which satisfies the browser's autoplay policy.
+   *
+   * If you're creating playback before any user interaction, the AudioContext
+   * will start in 'suspended' state and will auto-resume when audio is queued
+   * (assuming a user interaction has occurred by then).
    */
   async initialize(): Promise<void> {
     // Create AudioContext (handle Safari prefix)
@@ -74,10 +84,26 @@ export class AudioPlayback extends TypedEventEmitter<AudioPlaybackEvents> {
 
     this.audioContext = new AudioContextClass();
 
-    // Resume context if suspended (browser autoplay policy)
+    // Try to resume if suspended - this will succeed if any user interaction
+    // has occurred on the page. If not, it will remain suspended and we'll
+    // try again when audio is queued.
     if (this.audioContext.state === "suspended") {
-      await this.audioContext.resume();
+      this.audioContext.resume().catch(() => {
+        // Ignore - will retry when queuing audio
+      });
     }
+
+    // Listen for state changes to auto-play queued audio when context resumes
+    this.audioContext.addEventListener("statechange", () => {
+      if (
+        this.audioContext?.state === "running" &&
+        this.audioQueue.length > 0 &&
+        !this.isPlaying &&
+        !this.isPaused
+      ) {
+        this.playNext();
+      }
+    });
 
     // Create gain node for volume control
     this.gainNode = this.audioContext.createGain();
@@ -100,6 +126,32 @@ export class AudioPlayback extends TypedEventEmitter<AudioPlaybackEvents> {
 
     // Start buffer monitoring
     this.startBufferMonitoring();
+  }
+
+  /**
+   * Check if the AudioContext is ready to play audio
+   */
+  isReady(): boolean {
+    return this.audioContext !== null && this.audioContext.state === "running";
+  }
+
+  /**
+   * Get the current AudioContext state
+   */
+  getState(): AudioContextState | null {
+    return this.audioContext?.state ?? null;
+  }
+
+  /**
+   * Manually ensure the AudioContext is running.
+   * Call this from a user gesture if you need to pre-warm the context.
+   * In most cases, this is not necessary as the context will auto-resume
+   * when audio is queued (if a user interaction has occurred).
+   */
+  async ensureRunning(): Promise<void> {
+    if (this.audioContext && this.audioContext.state === "suspended") {
+      await this.audioContext.resume();
+    }
   }
 
   /**
@@ -154,9 +206,17 @@ export class AudioPlayback extends TypedEventEmitter<AudioPlaybackEvents> {
       return;
     }
 
-    // Ensure context is running
+    // Try to resume if suspended - will succeed if user has interacted with page
     if (this.audioContext.state === "suspended") {
-      await this.audioContext.resume();
+      try {
+        await this.audioContext.resume();
+      } catch {
+        // Context couldn't resume (no user interaction yet)
+        // Queue the audio anyway - it will play when context resumes
+        console.warn(
+          "AudioContext suspended - audio queued but won't play until user interaction"
+        );
+      }
     }
 
     // Convert PCM to AudioBuffer
@@ -172,8 +232,12 @@ export class AudioPlayback extends TypedEventEmitter<AudioPlaybackEvents> {
     this.audioQueue.push({ buffer: audioBuffer, startTime, turnId });
     this.nextPlayTime = startTime + audioBuffer.duration;
 
-    // Start playback if not already playing
-    if (!this.isPlaying && !this.isPaused) {
+    // Start playback if not already playing and context is running
+    if (
+      !this.isPlaying &&
+      !this.isPaused &&
+      this.audioContext.state === "running"
+    ) {
       this.playNext();
     }
   }

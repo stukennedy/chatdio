@@ -827,7 +827,17 @@ var AudioPlayback = class extends TypedEventEmitter {
   }
   /**
    * Initialize the audio playback system
-   * Should be called from a user gesture for Safari/Firefox
+   *
+   * Note: Unlike microphone access, AudioContext playback does NOT require
+   * a user gesture at the exact moment of initialization. It only requires
+   * that SOME user interaction has occurred on the page at some point.
+   *
+   * In typical conversational AI apps, the user will have clicked a button
+   * to connect/start, which satisfies the browser's autoplay policy.
+   *
+   * If you're creating playback before any user interaction, the AudioContext
+   * will start in 'suspended' state and will auto-resume when audio is queued
+   * (assuming a user interaction has occurred by then).
    */
   async initialize() {
     const AudioContextClass = window.AudioContext || window.webkitAudioContext;
@@ -836,8 +846,14 @@ var AudioPlayback = class extends TypedEventEmitter {
     }
     this.audioContext = new AudioContextClass();
     if (this.audioContext.state === "suspended") {
-      await this.audioContext.resume();
+      this.audioContext.resume().catch(() => {
+      });
     }
+    this.audioContext.addEventListener("statechange", () => {
+      if (this.audioContext?.state === "running" && this.audioQueue.length > 0 && !this.isPlaying && !this.isPaused) {
+        this.playNext();
+      }
+    });
     this.gainNode = this.audioContext.createGain();
     this.gainNode.gain.value = 1;
     this.analyzerNode = this.audioContext.createAnalyser();
@@ -850,6 +866,29 @@ var AudioPlayback = class extends TypedEventEmitter {
       this.analyzerNode.connect(this.audioContext.destination);
     }
     this.startBufferMonitoring();
+  }
+  /**
+   * Check if the AudioContext is ready to play audio
+   */
+  isReady() {
+    return this.audioContext !== null && this.audioContext.state === "running";
+  }
+  /**
+   * Get the current AudioContext state
+   */
+  getState() {
+    return this.audioContext?.state ?? null;
+  }
+  /**
+   * Manually ensure the AudioContext is running.
+   * Call this from a user gesture if you need to pre-warm the context.
+   * In most cases, this is not necessary as the context will auto-resume
+   * when audio is queued (if a user interaction has occurred).
+   */
+  async ensureRunning() {
+    if (this.audioContext && this.audioContext.state === "suspended") {
+      await this.audioContext.resume();
+    }
   }
   /**
    * Clean up resources
@@ -895,7 +934,13 @@ var AudioPlayback = class extends TypedEventEmitter {
       return;
     }
     if (this.audioContext.state === "suspended") {
-      await this.audioContext.resume();
+      try {
+        await this.audioContext.resume();
+      } catch {
+        console.warn(
+          "AudioContext suspended - audio queued but won't play until user interaction"
+        );
+      }
     }
     const audioBuffer = this.createAudioBuffer(data);
     const currentTime = this.audioContext.currentTime;
@@ -905,7 +950,7 @@ var AudioPlayback = class extends TypedEventEmitter {
     );
     this.audioQueue.push({ buffer: audioBuffer, startTime, turnId });
     this.nextPlayTime = startTime + audioBuffer.duration;
-    if (!this.isPlaying && !this.isPaused) {
+    if (!this.isPlaying && !this.isPaused && this.audioContext.state === "running") {
       this.playNext();
     }
   }

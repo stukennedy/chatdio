@@ -802,9 +802,34 @@ declare class AudioPlayback extends TypedEventEmitter<AudioPlaybackEvents> {
     constructor(config?: PlaybackConfig);
     /**
      * Initialize the audio playback system
-     * Should be called from a user gesture for Safari/Firefox
+     *
+     * Note: Unlike microphone access, AudioContext playback does NOT require
+     * a user gesture at the exact moment of initialization. It only requires
+     * that SOME user interaction has occurred on the page at some point.
+     *
+     * In typical conversational AI apps, the user will have clicked a button
+     * to connect/start, which satisfies the browser's autoplay policy.
+     *
+     * If you're creating playback before any user interaction, the AudioContext
+     * will start in 'suspended' state and will auto-resume when audio is queued
+     * (assuming a user interaction has occurred by then).
      */
     initialize(): Promise<void>;
+    /**
+     * Check if the AudioContext is ready to play audio
+     */
+    isReady(): boolean;
+    /**
+     * Get the current AudioContext state
+     */
+    getState(): AudioContextState | null;
+    /**
+     * Manually ensure the AudioContext is running.
+     * Call this from a user gesture if you need to pre-warm the context.
+     * In most cases, this is not necessary as the context will auto-resume
+     * when audio is queued (if a user interaction has occurred).
+     */
+    ensureRunning(): Promise<void>;
     /**
      * Clean up resources
      */
