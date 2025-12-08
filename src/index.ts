@@ -5,6 +5,7 @@ export { Chatdio } from "./Chatdio";
 export { AudioDeviceManager } from "./AudioDeviceManager";
 export { MicrophoneCapture, AudioFormatConverter } from "./MicrophoneCapture";
 export { AudioPlayback } from "./AudioPlayback";
+export { AudioRouter } from "./AudioRouter";
 export { WebSocketBridge } from "./WebSocketBridge";
 export { ActivityAnalyzer, VisualizationUtils } from "./ActivityAnalyzer";
 export {
@@ -18,6 +19,7 @@ export {
   base64ToArrayBuffer,
   uint8ArrayToBase64,
   base64ToUint8Array,
+  pcm16ToFloat32,
 } from "./utils";
 
 // Event emitter

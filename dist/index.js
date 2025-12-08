@@ -3,6 +3,7 @@ import {
   AudioDeviceManager,
   AudioFormatConverter,
   AudioPlayback,
+  AudioRouter,
   Chatdio,
   MicrophoneCapture,
   TypedEventEmitter,
@@ -13,13 +14,15 @@ import {
   base64ToArrayBuffer,
   base64ToUint8Array,
   createWorkletBlobUrl,
+  pcm16ToFloat32,
   uint8ArrayToBase64
-} from "./chunk-ITILR253.js";
+} from "./chunk-ITWOQBBP.js";
 export {
   ActivityAnalyzer,
   AudioDeviceManager,
   AudioFormatConverter,
   AudioPlayback,
+  AudioRouter,
   Chatdio,
   MicrophoneCapture,
   TypedEventEmitter,
@@ -30,5 +33,6 @@ export {
   base64ToArrayBuffer,
   base64ToUint8Array,
   createWorkletBlobUrl,
+  pcm16ToFloat32,
   uint8ArrayToBase64
 };

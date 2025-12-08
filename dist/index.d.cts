@@ -373,6 +373,26 @@ declare class Chatdio extends TypedEventEmitter<ChatdioEvents> {
      */
     isMicrophoneMuted(): boolean;
     /**
+     * Unlock audio playback on iOS.
+     *
+     * iOS Safari requires audio to be "unlocked" by playing audio directly
+     * in response to a user gesture (click/touch). Call this method from
+     * your click/touch handler before attempting to play audio.
+     *
+     * This plays a tiny silent buffer which unlocks the audio system,
+     * allowing subsequent programmatic audio playback.
+     *
+     * @example
+     * ```typescript
+     * // Call from user interaction handler
+     * startButton.addEventListener('click', async () => {
+     *   await audio.unlockAudio();
+     *   await audio.startConversation();
+     * });
+     * ```
+     */
+    unlockAudio(): Promise<void>;
+    /**
      * Queue audio data for playback
      * @param data - PCM audio data
      * @param turnId - Optional turn ID (uses current turn if not provided)
@@ -826,10 +846,31 @@ declare class AudioPlayback extends TypedEventEmitter<AudioPlaybackEvents> {
     /**
      * Manually ensure the AudioContext is running.
      * Call this from a user gesture if you need to pre-warm the context.
-     * In most cases, this is not necessary as the context will auto-resume
-     * when audio is queued (if a user interaction has occurred).
+     *
+     * IMPORTANT for iOS: This method should be called directly from a user
+     * gesture (click/touch) to unlock audio playback. iOS Safari requires
+     * audio to be initiated from user interaction.
      */
     ensureRunning(): Promise<void>;
+    /**
+     * Unlock audio playback on iOS.
+     *
+     * iOS Safari requires audio to be "unlocked" by playing audio directly
+     * in response to a user gesture (click/touch). Call this method from
+     * your click/touch handler before attempting to play audio.
+     *
+     * This plays a tiny silent buffer which unlocks the audio system,
+     * allowing subsequent programmatic audio playback.
+     *
+     * @example
+     * ```typescript
+     * button.addEventListener('click', async () => {
+     *   await playback.unlockAudio();
+     *   // Now audio will work even from non-user-gesture contexts
+     * });
+     * ```
+     */
+    unlockAudio(): Promise<void>;
     /**
      * Clean up resources
      */
@@ -840,6 +881,13 @@ declare class AudioPlayback extends TypedEventEmitter<AudioPlaybackEvents> {
      * @param turnId - Optional turn ID to associate with this audio
      */
     queueAudio(data: ArrayBuffer, turnId?: string): Promise<void>;
+    /**
+     * Queue PCM16 audio data for playback
+     * Convenience method that handles conversion from 16-bit PCM internally.
+     * @param data - PCM16 audio data (16-bit signed integer, little-endian)
+     * @param turnId - Optional turn ID to associate with this audio
+     */
+    queuePcm16(data: ArrayBuffer, turnId?: string): Promise<void>;
     /**
      * Queue pre-decoded AudioBuffer for playback
      * @param audioBuffer - Pre-decoded AudioBuffer
@@ -930,6 +978,145 @@ declare class AudioPlayback extends TypedEventEmitter<AudioPlaybackEvents> {
     private emitLevel;
     private startBufferMonitoring;
     private stopBufferMonitoring;
+}
+
+interface AudioRouterConfig {
+    sampleRate?: number;
+    channels?: number;
+    bufferAhead?: number;
+}
+interface AudioRouterEvents {
+    [key: string]: (...args: any[]) => void;
+    start: () => void;
+    stop: () => void;
+    ended: () => void;
+    error: (error: Error) => void;
+    "destination-added": (name: string) => void;
+    "destination-removed": (name: string) => void;
+}
+/**
+ * Routes audio to multiple destinations simultaneously
+ * Useful for playing to speakers while also streaming to other services
+ *
+ * @example
+ * ```typescript
+ * const router = new AudioRouter({ sampleRate: 24000 });
+ * await router.initialize();
+ *
+ * // Add speaker output
+ * router.addDestination('speakers', router.getContext().destination);
+ *
+ * // Add media stream for external service
+ * const streamDest = router.getContext().createMediaStreamDestination();
+ * router.addDestination('stream', streamDest);
+ *
+ * // Queue audio - plays to all destinations
+ * router.queuePcm16(audioData);
+ * ```
+ */
+declare class AudioRouter extends TypedEventEmitter<AudioRouterEvents> {
+    private audioContext;
+    private masterGain;
+    private streamDestination;
+    private destinations;
+    private audioQueue;
+    private currentSources;
+    private isPlaying;
+    private isPaused;
+    private nextPlayTime;
+    private config;
+    constructor(config?: AudioRouterConfig);
+    /**
+     * Initialize the audio router
+     */
+    initialize(): Promise<void>;
+    /**
+     * Get the AudioContext for creating custom nodes
+     */
+    getContext(): AudioContext;
+    /**
+     * Get a MediaStream of the routed audio
+     * Automatically creates and registers the "stream" destination if needed
+     */
+    getMediaStream(): MediaStream;
+    /**
+     * Add a destination to route audio to
+     * @param name - Unique identifier for this destination
+     * @param node - AudioNode to route audio to (e.g., context.destination, MediaStreamDestination)
+     * @param volume - Optional volume for this destination (0-1), defaults to 1
+     */
+    addDestination(name: string, node: AudioNode, volume?: number): void;
+    /**
+     * Remove a destination
+     * @param name - Name of the destination to remove
+     */
+    removeDestination(name: string): boolean;
+    /**
+     * Get all destination names
+     */
+    getDestinations(): string[];
+    /**
+     * Set volume for a specific destination
+     * @param name - Destination name
+     * @param volume - Volume level (0-1)
+     */
+    setDestinationVolume(name: string, volume: number): void;
+    /**
+     * Enable or disable a specific destination
+     * When disabled, audio is muted but the destination remains configured
+     * @param name - Destination name
+     * @param enabled - Whether the destination should be enabled
+     */
+    setDestinationEnabled(name: string, enabled: boolean): void;
+    /**
+     * Check if a destination is enabled
+     * @param name - Destination name
+     */
+    isDestinationEnabled(name: string): boolean;
+    /**
+     * Set master volume (affects all destinations)
+     * @param volume - Volume level (0-1)
+     */
+    setMasterVolume(volume: number): void;
+    /**
+     * Queue PCM16 audio data for playback to all destinations
+     * @param data - PCM16 audio data (16-bit signed integer, little-endian)
+     */
+    queuePcm16(data: ArrayBuffer): Promise<void>;
+    /**
+     * Queue a pre-created AudioBuffer
+     * @param audioBuffer - AudioBuffer to queue
+     */
+    queueAudioBuffer(audioBuffer: AudioBuffer): Promise<void>;
+    /**
+     * Stop playback and clear queue
+     */
+    stop(): void;
+    /**
+     * Pause playback
+     */
+    pause(): void;
+    /**
+     * Resume playback
+     */
+    resume(): Promise<void>;
+    /**
+     * Check if currently playing
+     */
+    isActive(): boolean;
+    /**
+     * Get buffered audio duration in seconds
+     */
+    getBufferedDuration(): number;
+    /**
+     * Unlock audio playback (call from user gesture for iOS)
+     */
+    unlockAudio(): Promise<void>;
+    /**
+     * Clean up resources
+     */
+    dispose(): void;
+    private playNext;
 }
 
 interface WebSocketBridgeEvents {
@@ -1054,5 +1241,11 @@ declare function uint8ArrayToBase64(bytes: Uint8Array): string;
  * @returns Uint8Array containing the decoded data
  */
 declare function base64ToUint8Array(base64: string): Uint8Array;
+/**
+ * Convert PCM16 (16-bit signed integer) audio data to Float32Array
+ * @param pcm16 - ArrayBuffer containing PCM16 audio data
+ * @returns Float32Array with values normalized to [-1, 1]
+ */
+declare function pcm16ToFloat32(pcm16: ArrayBuffer): Float32Array;
 
-export { ActivityAnalyzer, type ActivityAnalyzerConfig, type AudioActivityData, type AudioDevice, AudioDeviceManager, type AudioFormat, AudioFormatConverter, AudioPlayback, type BitDepth, Chatdio, type ChatdioConfig, type ChatdioEvents, type ConnectionState, type DeviceManagerConfig, MicrophoneCapture, type MicrophoneConfig, type ParsedAudioResult, type PlaybackConfig, type SampleRate, TypedEventEmitter, VisualizationUtils, WebSocketBridge, type WebSocketConfig, arrayBufferToBase64, audioWorkletProcessorCode, base64ToArrayBuffer, base64ToUint8Array, createWorkletBlobUrl, uint8ArrayToBase64 };
+export { ActivityAnalyzer, type ActivityAnalyzerConfig, type AudioActivityData, type AudioDevice, AudioDeviceManager, type AudioFormat, AudioFormatConverter, AudioPlayback, AudioRouter, type BitDepth, Chatdio, type ChatdioConfig, type ChatdioEvents, type ConnectionState, type DeviceManagerConfig, MicrophoneCapture, type MicrophoneConfig, type ParsedAudioResult, type PlaybackConfig, type SampleRate, TypedEventEmitter, VisualizationUtils, WebSocketBridge, type WebSocketConfig, arrayBufferToBase64, audioWorkletProcessorCode, base64ToArrayBuffer, base64ToUint8Array, createWorkletBlobUrl, pcm16ToFloat32, uint8ArrayToBase64 };

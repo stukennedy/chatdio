@@ -56,3 +56,12 @@ export function base64ToUint8Array(base64: string): Uint8Array {
   }
   return bytes;
 }
+
+/**
+ * Convert PCM16 (16-bit signed integer) audio data to Float32Array
+ * @param pcm16 - ArrayBuffer containing PCM16 audio data
+ * @returns Float32Array with values normalized to [-1, 1]
+ */
+export function pcm16ToFloat32(pcm16: ArrayBuffer): Float32Array {
+  return Float32Array.from(new Int16Array(pcm16), (x) => x / 32768);
+}

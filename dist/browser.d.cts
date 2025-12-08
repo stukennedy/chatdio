@@ -1,4 +1,4 @@
-import { Chatdio, AudioDeviceManager, MicrophoneCapture, AudioFormatConverter, AudioPlayback, WebSocketBridge, ActivityAnalyzer, VisualizationUtils, createWorkletBlobUrl, arrayBufferToBase64, base64ToArrayBuffer, uint8ArrayToBase64, base64ToUint8Array, TypedEventEmitter } from './index.cjs';
+import { Chatdio, AudioDeviceManager, MicrophoneCapture, AudioFormatConverter, AudioPlayback, AudioRouter, WebSocketBridge, ActivityAnalyzer, VisualizationUtils, createWorkletBlobUrl, arrayBufferToBase64, base64ToArrayBuffer, uint8ArrayToBase64, base64ToUint8Array, pcm16ToFloat32, TypedEventEmitter } from './index.cjs';
 export { audioWorkletProcessorCode } from './index.cjs';
 
 /**
@@ -14,6 +14,7 @@ declare const ConversationalAudio: {
     MicrophoneCapture: typeof MicrophoneCapture;
     AudioFormatConverter: typeof AudioFormatConverter;
     AudioPlayback: typeof AudioPlayback;
+    AudioRouter: typeof AudioRouter;
     WebSocketBridge: typeof WebSocketBridge;
     ActivityAnalyzer: typeof ActivityAnalyzer;
     VisualizationUtils: typeof VisualizationUtils;
@@ -23,7 +24,8 @@ declare const ConversationalAudio: {
     base64ToArrayBuffer: typeof base64ToArrayBuffer;
     uint8ArrayToBase64: typeof uint8ArrayToBase64;
     base64ToUint8Array: typeof base64ToUint8Array;
+    pcm16ToFloat32: typeof pcm16ToFloat32;
     TypedEventEmitter: typeof TypedEventEmitter;
 };
 
-export { ActivityAnalyzer, AudioDeviceManager, AudioFormatConverter, AudioPlayback, Chatdio, MicrophoneCapture, TypedEventEmitter, VisualizationUtils, WebSocketBridge, arrayBufferToBase64, base64ToArrayBuffer, base64ToUint8Array, createWorkletBlobUrl, ConversationalAudio as default, uint8ArrayToBase64 };
+export { ActivityAnalyzer, AudioDeviceManager, AudioFormatConverter, AudioPlayback, AudioRouter, Chatdio, MicrophoneCapture, TypedEventEmitter, VisualizationUtils, WebSocketBridge, arrayBufferToBase64, base64ToArrayBuffer, base64ToUint8Array, createWorkletBlobUrl, ConversationalAudio as default, pcm16ToFloat32, uint8ArrayToBase64 };

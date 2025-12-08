@@ -446,6 +446,8 @@ elements.initBtn.addEventListener("click", async () => {
   try {
     log("Initializing audio...");
     await audio.initialize();
+    // Unlock audio for iOS - must be called from user gesture
+    await audio.unlockAudio();
     log("Audio initialized!", "success");
 
     // Enable controls

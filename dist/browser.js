@@ -3,6 +3,7 @@ import {
   AudioDeviceManager,
   AudioFormatConverter,
   AudioPlayback,
+  AudioRouter,
   Chatdio,
   MicrophoneCapture,
   TypedEventEmitter,
@@ -13,8 +14,9 @@ import {
   base64ToArrayBuffer,
   base64ToUint8Array,
   createWorkletBlobUrl,
+  pcm16ToFloat32,
   uint8ArrayToBase64
-} from "./chunk-ITILR253.js";
+} from "./chunk-ITWOQBBP.js";
 
 // src/browser.ts
 var ConversationalAudio = {
@@ -25,6 +27,7 @@ var ConversationalAudio = {
   MicrophoneCapture,
   AudioFormatConverter,
   AudioPlayback,
+  AudioRouter,
   WebSocketBridge,
   ActivityAnalyzer,
   VisualizationUtils,
@@ -36,6 +39,7 @@ var ConversationalAudio = {
   base64ToArrayBuffer,
   uint8ArrayToBase64,
   base64ToUint8Array,
+  pcm16ToFloat32,
   // Event emitter
   TypedEventEmitter
 };
@@ -48,6 +52,7 @@ export {
   AudioDeviceManager,
   AudioFormatConverter,
   AudioPlayback,
+  AudioRouter,
   Chatdio,
   MicrophoneCapture,
   TypedEventEmitter,
@@ -59,5 +64,6 @@ export {
   base64ToUint8Array,
   createWorkletBlobUrl,
   browser_default as default,
+  pcm16ToFloat32,
   uint8ArrayToBase64
 };

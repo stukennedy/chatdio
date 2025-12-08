@@ -24,6 +24,7 @@ __export(index_exports, {
   AudioDeviceManager: () => AudioDeviceManager,
   AudioFormatConverter: () => AudioFormatConverter,
   AudioPlayback: () => AudioPlayback,
+  AudioRouter: () => AudioRouter,
   Chatdio: () => Chatdio,
   MicrophoneCapture: () => MicrophoneCapture,
   TypedEventEmitter: () => TypedEventEmitter,
@@ -34,6 +35,7 @@ __export(index_exports, {
   base64ToArrayBuffer: () => base64ToArrayBuffer,
   base64ToUint8Array: () => base64ToUint8Array,
   createWorkletBlobUrl: () => createWorkletBlobUrl,
+  pcm16ToFloat32: () => pcm16ToFloat32,
   uint8ArrayToBase64: () => uint8ArrayToBase64
 });
 module.exports = __toCommonJS(index_exports);
@@ -845,8 +847,13 @@ var AudioPlayback = class extends TypedEventEmitter {
       throw new Error("Web Audio API not supported");
     }
     this.audioContext = new AudioContextClass();
+    console.log("[AudioPlayback] AudioContext created, state:", this.audioContext.state, "sampleRate:", this.audioContext.sampleRate);
     if (this.audioContext.state === "suspended") {
-      this.audioContext.resume().catch(() => {
+      console.log("[AudioPlayback] AudioContext suspended, attempting initial resume...");
+      this.audioContext.resume().then(() => {
+        console.log("[AudioPlayback] Initial resume succeeded, state:", this.audioContext?.state);
+      }).catch((err) => {
+        console.log("[AudioPlayback] Initial resume failed (expected if no user gesture):", err);
       });
     }
     this.audioContext.addEventListener("statechange", () => {
@@ -882,13 +889,69 @@ var AudioPlayback = class extends TypedEventEmitter {
   /**
    * Manually ensure the AudioContext is running.
    * Call this from a user gesture if you need to pre-warm the context.
-   * In most cases, this is not necessary as the context will auto-resume
-   * when audio is queued (if a user interaction has occurred).
+   *
+   * IMPORTANT for iOS: This method should be called directly from a user
+   * gesture (click/touch) to unlock audio playback. iOS Safari requires
+   * audio to be initiated from user interaction.
    */
   async ensureRunning() {
     if (this.audioContext && this.audioContext.state === "suspended") {
       await this.audioContext.resume();
     }
+    if (this.audioElement && this.audioElement.paused) {
+      try {
+        await this.audioElement.play();
+      } catch {
+      }
+    }
+  }
+  /**
+   * Unlock audio playback on iOS.
+   *
+   * iOS Safari requires audio to be "unlocked" by playing audio directly
+   * in response to a user gesture (click/touch). Call this method from
+   * your click/touch handler before attempting to play audio.
+   *
+   * This plays a tiny silent buffer which unlocks the audio system,
+   * allowing subsequent programmatic audio playback.
+   *
+   * @example
+   * ```typescript
+   * button.addEventListener('click', async () => {
+   *   await playback.unlockAudio();
+   *   // Now audio will work even from non-user-gesture contexts
+   * });
+   * ```
+   */
+  async unlockAudio() {
+    if (!this.audioContext) {
+      throw new Error("AudioPlayback not initialized");
+    }
+    console.log("[AudioPlayback] unlockAudio called, state:", this.audioContext.state);
+    if (this.audioContext.state === "suspended") {
+      try {
+        await this.audioContext.resume();
+        console.log("[AudioPlayback] AudioContext resumed, new state:", this.audioContext.state);
+      } catch (err) {
+        console.error("[AudioPlayback] Failed to resume AudioContext:", err);
+        throw err;
+      }
+    }
+    const buffer = this.audioContext.createBuffer(1, 1, this.audioContext.sampleRate);
+    const source = this.audioContext.createBufferSource();
+    source.buffer = buffer;
+    source.connect(this.audioContext.destination);
+    source.start(0);
+    console.log("[AudioPlayback] Silent buffer played for iOS unlock");
+    if (this.audioElement && this.audioElement.paused) {
+      try {
+        await this.audioElement.play();
+        console.log("[AudioPlayback] Audio element started");
+      } catch (err) {
+        console.warn("[AudioPlayback] Audio element play failed (may be expected):", err);
+      }
+    }
+    console.log("[AudioPlayback] unlockAudio complete, final state:", this.audioContext.state);
   }
   /**
    * Clean up resources
@@ -931,18 +994,74 @@ var AudioPlayback = class extends TypedEventEmitter {
       throw new Error("AudioPlayback not initialized");
     }
     if (turnId && this.currentTurnId && turnId !== this.currentTurnId) {
+      console.log("[AudioPlayback] Ignoring audio for old turn:", turnId);
+      return;
+    }
+    console.log("[AudioPlayback] queueAudio called, bytes:", data.byteLength, "state:", this.audioContext.state);
+    if (this.audioContext.state === "suspended") {
+      console.warn("[AudioPlayback] AudioContext is suspended, attempting resume...");
+      try {
+        await this.audioContext.resume();
+        console.log("[AudioPlayback] AudioContext resumed successfully, state:", this.audioContext.state);
+      } catch (err) {
+        console.warn(
+          "[AudioPlayback] AudioContext suspended - audio queued but won't play until user interaction. Error:",
+          err
+        );
+      }
+    }
+    const audioBuffer = this.createAudioBuffer(data);
+    const currentTime = this.audioContext.currentTime;
+    const startTime = Math.max(
+      this.nextPlayTime,
+      currentTime + this.config.bufferAhead
+    );
+    this.audioQueue.push({ buffer: audioBuffer, startTime, turnId });
+    this.nextPlayTime = startTime + audioBuffer.duration;
+    if (!this.isPlaying && !this.isPaused && this.audioContext.state === "running") {
+      this.playNext();
+    }
+  }
+  /**
+   * Queue PCM16 audio data for playback
+   * Convenience method that handles conversion from 16-bit PCM internally.
+   * @param data - PCM16 audio data (16-bit signed integer, little-endian)
+   * @param turnId - Optional turn ID to associate with this audio
+   */
+  async queuePcm16(data, turnId) {
+    if (!this.audioContext || !this.gainNode) {
+      throw new Error("AudioPlayback not initialized");
+    }
+    if (turnId && this.currentTurnId && turnId !== this.currentTurnId) {
+      console.log("[AudioPlayback] Ignoring PCM16 audio for old turn:", turnId);
       return;
     }
     if (this.audioContext.state === "suspended") {
       try {
         await this.audioContext.resume();
       } catch {
-        console.warn(
-          "AudioContext suspended - audio queued but won't play until user interaction"
-        );
       }
     }
-    const audioBuffer = this.createAudioBuffer(data);
+    const floatData = Float32Array.from(
+      new Int16Array(data),
+      (x) => x / 32768
+    );
+    const numSamples = floatData.length / this.config.channels;
+    const audioBuffer = this.audioContext.createBuffer(
+      this.config.channels,
+      numSamples,
+      this.config.sampleRate
+    );
+    if (this.config.channels === 1) {
+      audioBuffer.getChannelData(0).set(floatData);
+    } else {
+      const left = audioBuffer.getChannelData(0);
+      const right = audioBuffer.getChannelData(1);
+      for (let i = 0; i < numSamples; i++) {
+        left[i] = floatData[i * 2];
+        right[i] = floatData[i * 2 + 1];
+      }
+    }
     const currentTime = this.audioContext.currentTime;
     const startTime = Math.max(
       this.nextPlayTime,
@@ -1187,6 +1306,10 @@ var AudioPlayback = class extends TypedEventEmitter {
     this.audioElement = document.createElement("audio");
     this.audioElement.srcObject = this.mediaStreamDestination.stream;
     this.audioElement.autoplay = true;
+    this.audioElement.setAttribute("playsinline", "true");
+    this.audioElement.setAttribute("webkit-playsinline", "true");
+    this.audioElement.play().catch(() => {
+    });
     if (this.config.deviceId && "setSinkId" in this.audioElement) {
       this.audioElement.setSinkId(this.config.deviceId).catch((err) => {
         console.warn("Failed to set output device:", err);
@@ -1222,6 +1345,7 @@ var AudioPlayback = class extends TypedEventEmitter {
   playNext() {
     if (!this.audioContext || !this.gainNode || this.audioQueue.length === 0) {
       if (this.isPlaying) {
+        console.log("[AudioPlayback] playNext: queue empty, playback ended");
         this.isPlaying = false;
         this.currentSourceTurnId = null;
         this.emit("ended");
@@ -1231,19 +1355,27 @@ var AudioPlayback = class extends TypedEventEmitter {
     }
     const { buffer, startTime, turnId } = this.audioQueue.shift();
     if (turnId && this.currentTurnId && turnId !== this.currentTurnId) {
+      console.log("[AudioPlayback] playNext: skipping old turn audio");
       this.playNext();
       return;
     }
+    console.log("[AudioPlayback] playNext: playing buffer, duration:", buffer.duration.toFixed(3), "s, sampleRate:", buffer.sampleRate, "contextState:", this.audioContext.state);
     this.currentSource = this.audioContext.createBufferSource();
     this.currentSource.buffer = buffer;
     this.currentSource.connect(this.gainNode);
     this.currentSourceTurnId = turnId ?? null;
     this.currentSource.onended = () => {
+      console.log("[AudioPlayback] playNext: buffer ended, playing next");
       this.playNext();
     };
     const currentTime = this.audioContext.currentTime;
     const playAt = Math.max(startTime, currentTime);
-    this.currentSource.start(playAt);
+    try {
+      this.currentSource.start(playAt);
+      console.log("[AudioPlayback] playNext: started at", playAt.toFixed(3), "currentTime:", currentTime.toFixed(3));
+    } catch (err) {
+      console.error("[AudioPlayback] playNext: failed to start source:", err);
+    }
     if (!this.isPlaying) {
       this.isPlaying = true;
       this.emit("start");
@@ -2009,6 +2141,31 @@ var Chatdio = class extends TypedEventEmitter {
   }
   // ==================== Playback Methods ====================
   /**
+   * Unlock audio playback on iOS.
+   *
+   * iOS Safari requires audio to be "unlocked" by playing audio directly
+   * in response to a user gesture (click/touch). Call this method from
+   * your click/touch handler before attempting to play audio.
+   *
+   * This plays a tiny silent buffer which unlocks the audio system,
+   * allowing subsequent programmatic audio playback.
+   *
+   * @example
+   * ```typescript
+   * // Call from user interaction handler
+   * startButton.addEventListener('click', async () => {
+   *   await audio.unlockAudio();
+   *   await audio.startConversation();
+   * });
+   * ```
+   */
+  async unlockAudio() {
+    if (!this.isInitialized) {
+      await this.initialize();
+    }
+    await this.playback.unlockAudio();
+  }
+  /**
    * Queue audio data for playback
    * @param data - PCM audio data
    * @param turnId - Optional turn ID (uses current turn if not provided)
@@ -2455,6 +2612,356 @@ var Chatdio = class extends TypedEventEmitter {
   }
 };
 
+// src/AudioRouter.ts
+var AudioRouter = class extends TypedEventEmitter {
+  constructor(config = {}) {
+    super();
+    this.audioContext = null;
+    this.masterGain = null;
+    this.streamDestination = null;
+    this.destinations = /* @__PURE__ */ new Map();
+    this.audioQueue = [];
+    this.currentSources = [];
+    this.isPlaying = false;
+    this.isPaused = false;
+    this.nextPlayTime = 0;
+    this.config = {
+      sampleRate: config.sampleRate ?? 24e3,
+      channels: config.channels ?? 1,
+      bufferAhead: config.bufferAhead ?? 0.1
+    };
+  }
+  /**
+   * Initialize the audio router
+   */
+  async initialize() {
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContextClass) {
+      throw new Error("Web Audio API not supported");
+    }
+    this.audioContext = new AudioContextClass({
+      sampleRate: this.config.sampleRate
+    });
+    this.masterGain = this.audioContext.createGain();
+    this.masterGain.gain.value = 1;
+    if (this.audioContext.state === "suspended") {
+      this.audioContext.resume().catch(() => {
+      });
+    }
+    this.audioContext.addEventListener("statechange", () => {
+      if (this.audioContext?.state === "running" && this.audioQueue.length > 0 && !this.isPlaying && !this.isPaused) {
+        this.playNext();
+      }
+    });
+  }
+  /**
+   * Get the AudioContext for creating custom nodes
+   */
+  getContext() {
+    if (!this.audioContext) {
+      throw new Error("AudioRouter not initialized");
+    }
+    return this.audioContext;
+  }
+  /**
+   * Get a MediaStream of the routed audio
+   * Automatically creates and registers the "stream" destination if needed
+   */
+  getMediaStream() {
+    if (!this.audioContext || !this.masterGain) {
+      throw new Error("AudioRouter not initialized");
+    }
+    if (!this.streamDestination) {
+      this.streamDestination = this.audioContext.createMediaStreamDestination();
+    }
+    if (!this.destinations.has("stream")) {
+      this.addDestination("stream", this.streamDestination);
+    }
+    return this.streamDestination.stream;
+  }
+  /**
+   * Add a destination to route audio to
+   * @param name - Unique identifier for this destination
+   * @param node - AudioNode to route audio to (e.g., context.destination, MediaStreamDestination)
+   * @param volume - Optional volume for this destination (0-1), defaults to 1
+   */
+  addDestination(name, node, volume = 1) {
+    if (!this.audioContext || !this.masterGain) {
+      throw new Error("AudioRouter not initialized");
+    }
+    if (this.destinations.has(name)) {
+      throw new Error(`Destination '${name}' already exists`);
+    }
+    const gain = this.audioContext.createGain();
+    const clampedVolume = Math.max(0, Math.min(1, volume));
+    gain.gain.value = clampedVolume;
+    this.masterGain.connect(gain);
+    gain.connect(node);
+    this.destinations.set(name, {
+      name,
+      node,
+      gain,
+      volume: clampedVolume,
+      enabled: true
+    });
+    this.emit("destination-added", name);
+  }
+  /**
+   * Remove a destination
+   * @param name - Name of the destination to remove
+   */
+  removeDestination(name) {
+    const dest = this.destinations.get(name);
+    if (!dest) return false;
+    dest.gain.disconnect();
+    this.destinations.delete(name);
+    this.emit("destination-removed", name);
+    return true;
+  }
+  /**
+   * Get all destination names
+   */
+  getDestinations() {
+    return Array.from(this.destinations.keys());
+  }
+  /**
+   * Set volume for a specific destination
+   * @param name - Destination name
+   * @param volume - Volume level (0-1)
+   */
+  setDestinationVolume(name, volume) {
+    const dest = this.destinations.get(name);
+    if (dest) {
+      dest.volume = Math.max(0, Math.min(1, volume));
+      if (dest.enabled) {
+        dest.gain.gain.value = dest.volume;
+      }
+    }
+  }
+  /**
+   * Enable or disable a specific destination
+   * When disabled, audio is muted but the destination remains configured
+   * @param name - Destination name
+   * @param enabled - Whether the destination should be enabled
+   */
+  setDestinationEnabled(name, enabled) {
+    const dest = this.destinations.get(name);
+    if (dest) {
+      dest.enabled = enabled;
+      dest.gain.gain.value = enabled ? dest.volume : 0;
+    }
+  }
+  /**
+   * Check if a destination is enabled
+   * @param name - Destination name
+   */
+  isDestinationEnabled(name) {
+    return this.destinations.get(name)?.enabled ?? false;
+  }
+  /**
+   * Set master volume (affects all destinations)
+   * @param volume - Volume level (0-1)
+   */
+  setMasterVolume(volume) {
+    if (this.masterGain) {
+      this.masterGain.gain.value = Math.max(0, Math.min(1, volume));
+    }
+  }
+  /**
+   * Queue PCM16 audio data for playback to all destinations
+   * @param data - PCM16 audio data (16-bit signed integer, little-endian)
+   */
+  async queuePcm16(data) {
+    if (!this.audioContext || !this.masterGain) {
+      throw new Error("AudioRouter not initialized");
+    }
+    if (this.destinations.size === 0) {
+      console.warn("[AudioRouter] No destinations configured");
+      return;
+    }
+    if (this.audioContext.state === "suspended") {
+      try {
+        await this.audioContext.resume();
+      } catch {
+      }
+    }
+    const floatData = Float32Array.from(new Int16Array(data), (x) => x / 32768);
+    const numSamples = floatData.length / this.config.channels;
+    const audioBuffer = this.audioContext.createBuffer(
+      this.config.channels,
+      numSamples,
+      this.config.sampleRate
+    );
+    if (this.config.channels === 1) {
+      audioBuffer.getChannelData(0).set(floatData);
+    } else {
+      const left = audioBuffer.getChannelData(0);
+      const right = audioBuffer.getChannelData(1);
+      for (let i = 0; i < numSamples; i++) {
+        left[i] = floatData[i * 2];
+        right[i] = floatData[i * 2 + 1];
+      }
+    }
+    const currentTime = this.audioContext.currentTime;
+    const startTime = Math.max(
+      this.nextPlayTime,
+      currentTime + this.config.bufferAhead
+    );
+    this.audioQueue.push({ buffer: audioBuffer, startTime });
+    this.nextPlayTime = startTime + audioBuffer.duration;
+    if (!this.isPlaying && !this.isPaused && this.audioContext.state === "running") {
+      this.playNext();
+    }
+  }
+  /**
+   * Queue a pre-created AudioBuffer
+   * @param audioBuffer - AudioBuffer to queue
+   */
+  async queueAudioBuffer(audioBuffer) {
+    if (!this.audioContext || !this.masterGain) {
+      throw new Error("AudioRouter not initialized");
+    }
+    if (this.audioContext.state === "suspended") {
+      await this.audioContext.resume();
+    }
+    const currentTime = this.audioContext.currentTime;
+    const startTime = Math.max(
+      this.nextPlayTime,
+      currentTime + this.config.bufferAhead
+    );
+    this.audioQueue.push({ buffer: audioBuffer, startTime });
+    this.nextPlayTime = startTime + audioBuffer.duration;
+    if (!this.isPlaying && !this.isPaused) {
+      this.playNext();
+    }
+  }
+  /**
+   * Stop playback and clear queue
+   */
+  stop() {
+    for (const source of this.currentSources) {
+      try {
+        source.stop();
+        source.disconnect();
+      } catch {
+      }
+    }
+    this.currentSources = [];
+    this.audioQueue = [];
+    this.isPlaying = false;
+    this.isPaused = false;
+    this.nextPlayTime = 0;
+    this.emit("stop");
+  }
+  /**
+   * Pause playback
+   */
+  pause() {
+    if (this.audioContext && this.isPlaying) {
+      this.audioContext.suspend();
+      this.isPaused = true;
+    }
+  }
+  /**
+   * Resume playback
+   */
+  async resume() {
+    if (this.audioContext && this.isPaused) {
+      await this.audioContext.resume();
+      this.isPaused = false;
+    }
+  }
+  /**
+   * Check if currently playing
+   */
+  isActive() {
+    return this.isPlaying && !this.isPaused;
+  }
+  /**
+   * Get buffered audio duration in seconds
+   */
+  getBufferedDuration() {
+    return this.audioQueue.reduce((sum, item) => sum + item.buffer.duration, 0);
+  }
+  /**
+   * Unlock audio playback (call from user gesture for iOS)
+   */
+  async unlockAudio() {
+    if (!this.audioContext) {
+      throw new Error("AudioRouter not initialized");
+    }
+    if (this.audioContext.state === "suspended") {
+      await this.audioContext.resume();
+    }
+    const buffer = this.audioContext.createBuffer(
+      1,
+      1,
+      this.audioContext.sampleRate
+    );
+    const source = this.audioContext.createBufferSource();
+    source.buffer = buffer;
+    source.connect(this.audioContext.destination);
+    source.start(0);
+  }
+  /**
+   * Clean up resources
+   */
+  dispose() {
+    this.stop();
+    for (const dest of this.destinations.values()) {
+      dest.gain.disconnect();
+    }
+    this.destinations.clear();
+    if (this.streamDestination) {
+      this.streamDestination.disconnect();
+      this.streamDestination = null;
+    }
+    if (this.masterGain) {
+      this.masterGain.disconnect();
+      this.masterGain = null;
+    }
+    if (this.audioContext && this.audioContext.state !== "closed") {
+      this.audioContext.close().catch(() => {
+      });
+    }
+    this.audioContext = null;
+    this.removeAllListeners();
+  }
+  playNext() {
+    if (!this.audioContext || !this.masterGain || this.audioQueue.length === 0) {
+      if (this.isPlaying) {
+        this.isPlaying = false;
+        this.emit("ended");
+      }
+      return;
+    }
+    const { buffer, startTime } = this.audioQueue.shift();
+    const source = this.audioContext.createBufferSource();
+    source.buffer = buffer;
+    source.connect(this.masterGain);
+    this.currentSources.push(source);
+    source.onended = () => {
+      const idx = this.currentSources.indexOf(source);
+      if (idx !== -1) {
+        this.currentSources.splice(idx, 1);
+      }
+      this.playNext();
+    };
+    const currentTime = this.audioContext.currentTime;
+    const playAt = Math.max(startTime, currentTime);
+    try {
+      source.start(playAt);
+    } catch (err) {
+      console.error("[AudioRouter] Failed to start source:", err);
+      this.emit("error", err);
+    }
+    if (!this.isPlaying) {
+      this.isPlaying = true;
+      this.emit("start");
+    }
+  }
+};
+
 // src/utils.ts
 function arrayBufferToBase64(buffer) {
   const bytes = new Uint8Array(buffer);
@@ -2487,12 +2994,16 @@ function base64ToUint8Array(base64) {
   }
   return bytes;
 }
+function pcm16ToFloat32(pcm16) {
+  return Float32Array.from(new Int16Array(pcm16), (x) => x / 32768);
+}
 // Annotate the CommonJS export names for ESM import in node:
 0 && (module.exports = {
   ActivityAnalyzer,
   AudioDeviceManager,
   AudioFormatConverter,
   AudioPlayback,
+  AudioRouter,
   Chatdio,
   MicrophoneCapture,
   TypedEventEmitter,
@@ -2503,5 +3014,6 @@ function base64ToUint8Array(base64) {
   base64ToArrayBuffer,
   base64ToUint8Array,
   createWorkletBlobUrl,
+  pcm16ToFloat32,
   uint8ArrayToBase64
 });

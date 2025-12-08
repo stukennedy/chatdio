@@ -155,6 +155,32 @@ export class Chatdio extends TypedEventEmitter<ChatdioEvents> {
   // ==================== Playback Methods ====================
 
   /**
+   * Unlock audio playback on iOS.
+   *
+   * iOS Safari requires audio to be "unlocked" by playing audio directly
+   * in response to a user gesture (click/touch). Call this method from
+   * your click/touch handler before attempting to play audio.
+   *
+   * This plays a tiny silent buffer which unlocks the audio system,
+   * allowing subsequent programmatic audio playback.
+   *
+   * @example
+   * ```typescript
+   * // Call from user interaction handler
+   * startButton.addEventListener('click', async () => {
+   *   await audio.unlockAudio();
+   *   await audio.startConversation();
+   * });
+   * ```
+   */
+  async unlockAudio(): Promise<void> {
+    if (!this.isInitialized) {
+      await this.initialize();
+    }
+    await this.playback.unlockAudio();
+  }
+
+  /**
    * Queue audio data for playback
    * @param data - PCM audio data
    * @param turnId - Optional turn ID (uses current turn if not provided)

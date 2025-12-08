@@ -9,6 +9,7 @@ import { Chatdio } from "./Chatdio";
 import { AudioDeviceManager } from "./AudioDeviceManager";
 import { MicrophoneCapture, AudioFormatConverter } from "./MicrophoneCapture";
 import { AudioPlayback } from "./AudioPlayback";
+import { AudioRouter } from "./AudioRouter";
 import { WebSocketBridge } from "./WebSocketBridge";
 import { ActivityAnalyzer, VisualizationUtils } from "./ActivityAnalyzer";
 import {
@@ -20,6 +21,7 @@ import {
   base64ToArrayBuffer,
   uint8ArrayToBase64,
   base64ToUint8Array,
+  pcm16ToFloat32,
 } from "./utils";
 import { TypedEventEmitter } from "./EventEmitter";
 
@@ -33,6 +35,7 @@ const ConversationalAudio = {
   MicrophoneCapture,
   AudioFormatConverter,
   AudioPlayback,
+  AudioRouter,
   WebSocketBridge,
   ActivityAnalyzer,
   VisualizationUtils,
@@ -46,6 +49,7 @@ const ConversationalAudio = {
   base64ToArrayBuffer,
   uint8ArrayToBase64,
   base64ToUint8Array,
+  pcm16ToFloat32,
 
   // Event emitter
   TypedEventEmitter,
@@ -68,6 +72,7 @@ export {
   MicrophoneCapture,
   AudioFormatConverter,
   AudioPlayback,
+  AudioRouter,
   WebSocketBridge,
   ActivityAnalyzer,
   VisualizationUtils,
@@ -77,5 +82,6 @@ export {
   base64ToArrayBuffer,
   uint8ArrayToBase64,
   base64ToUint8Array,
+  pcm16ToFloat32,
   TypedEventEmitter,
 };

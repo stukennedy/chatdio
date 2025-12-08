@@ -449,6 +449,31 @@ type ConnectionState = 'disconnected' | 'connecting' | 'connected' | 'reconnecti
 - **Echo Cancellation**: Browser implementations vary; Chrome generally has the best echo cancellation
 - **Sample Rates**: Native sample rate depends on the audio device; resampling is done in JavaScript when needed
 
+## iOS Compatibility
+
+iOS Safari has strict requirements for audio playback. To ensure audio works on iPhone/iPad:
+
+1. **Call `unlockAudio()` from a user gesture** (click/touch handler):
+
+```typescript
+// IMPORTANT: Call this directly from a button click or touch event
+startButton.addEventListener('click', async () => {
+  await audio.initialize();
+  await audio.unlockAudio();  // Unlocks iOS audio
+  await audio.startConversation();
+});
+```
+
+2. **Why this is needed**: iOS Safari requires audio to be "unlocked" by playing audio directly in response to a user gesture. The `unlockAudio()` method plays a tiny silent buffer which enables subsequent programmatic audio playback.
+
+3. **Common pitfall**: If you initialize audio on page load or from a non-user-gesture context (like a setTimeout or Promise resolution), audio playback will fail silently on iOS.
+
+4. **The `unlockAudio()` method**:
+   - Resumes the AudioContext if suspended
+   - Plays a silent buffer to unlock iOS audio
+   - Starts the audio element if using output device selection
+   - Should be called once per session, from a user gesture
+
 ## License
 
 MIT

@@ -83,13 +83,17 @@ export class AudioPlayback extends TypedEventEmitter<AudioPlaybackEvents> {
     }
 
     this.audioContext = new AudioContextClass();
+    console.log("[AudioPlayback] AudioContext created, state:", this.audioContext.state, "sampleRate:", this.audioContext.sampleRate);
 
     // Try to resume if suspended - this will succeed if any user interaction
     // has occurred on the page. If not, it will remain suspended and we'll
     // try again when audio is queued.
     if (this.audioContext.state === "suspended") {
-      this.audioContext.resume().catch(() => {
-        // Ignore - will retry when queuing audio
+      console.log("[AudioPlayback] AudioContext suspended, attempting initial resume...");
+      this.audioContext.resume().then(() => {
+        console.log("[AudioPlayback] Initial resume succeeded, state:", this.audioContext?.state);
+      }).catch((err) => {
+        console.log("[AudioPlayback] Initial resume failed (expected if no user gesture):", err);
       });
     }
 
@@ -145,13 +149,82 @@ export class AudioPlayback extends TypedEventEmitter<AudioPlaybackEvents> {
   /**
    * Manually ensure the AudioContext is running.
    * Call this from a user gesture if you need to pre-warm the context.
-   * In most cases, this is not necessary as the context will auto-resume
-   * when audio is queued (if a user interaction has occurred).
+   *
+   * IMPORTANT for iOS: This method should be called directly from a user
+   * gesture (click/touch) to unlock audio playback. iOS Safari requires
+   * audio to be initiated from user interaction.
    */
   async ensureRunning(): Promise<void> {
     if (this.audioContext && this.audioContext.state === "suspended") {
       await this.audioContext.resume();
     }
+
+    // Also ensure the audio element is playing (required for iOS)
+    if (this.audioElement && this.audioElement.paused) {
+      try {
+        await this.audioElement.play();
+      } catch {
+        // May fail if still no user gesture context
+      }
+    }
+  }
+
+  /**
+   * Unlock audio playback on iOS.
+   *
+   * iOS Safari requires audio to be "unlocked" by playing audio directly
+   * in response to a user gesture (click/touch). Call this method from
+   * your click/touch handler before attempting to play audio.
+   *
+   * This plays a tiny silent buffer which unlocks the audio system,
+   * allowing subsequent programmatic audio playback.
+   *
+   * @example
+   * ```typescript
+   * button.addEventListener('click', async () => {
+   *   await playback.unlockAudio();
+   *   // Now audio will work even from non-user-gesture contexts
+   * });
+   * ```
+   */
+  async unlockAudio(): Promise<void> {
+    if (!this.audioContext) {
+      throw new Error("AudioPlayback not initialized");
+    }
+
+    console.log("[AudioPlayback] unlockAudio called, state:", this.audioContext.state);
+
+    // Resume context first - MUST happen synchronously in user gesture
+    if (this.audioContext.state === "suspended") {
+      try {
+        await this.audioContext.resume();
+        console.log("[AudioPlayback] AudioContext resumed, new state:", this.audioContext.state);
+      } catch (err) {
+        console.error("[AudioPlayback] Failed to resume AudioContext:", err);
+        throw err;
+      }
+    }
+
+    // Play a tiny silent buffer to unlock iOS audio
+    // This is the key trick that unlocks the audio system
+    const buffer = this.audioContext.createBuffer(1, 1, this.audioContext.sampleRate);
+    const source = this.audioContext.createBufferSource();
+    source.buffer = buffer;
+    source.connect(this.audioContext.destination);
+    source.start(0);
+    console.log("[AudioPlayback] Silent buffer played for iOS unlock");
+
+    // Also try to play the audio element if it exists
+    if (this.audioElement && this.audioElement.paused) {
+      try {
+        await this.audioElement.play();
+        console.log("[AudioPlayback] Audio element started");
+      } catch (err) {
+        console.warn("[AudioPlayback] Audio element play failed (may be expected):", err);
+      }
+    }
+
+    console.log("[AudioPlayback] unlockAudio complete, final state:", this.audioContext.state);
   }
 
   /**
@@ -203,24 +276,100 @@ export class AudioPlayback extends TypedEventEmitter<AudioPlaybackEvents> {
 
     // If turnId provided and doesn't match current turn, ignore
     if (turnId && this.currentTurnId && turnId !== this.currentTurnId) {
+      console.log("[AudioPlayback] Ignoring audio for old turn:", turnId);
       return;
     }
 
+    console.log("[AudioPlayback] queueAudio called, bytes:", data.byteLength, "state:", this.audioContext.state);
+
     // Try to resume if suspended - will succeed if user has interacted with page
     if (this.audioContext.state === "suspended") {
+      console.warn("[AudioPlayback] AudioContext is suspended, attempting resume...");
       try {
         await this.audioContext.resume();
-      } catch {
+        console.log("[AudioPlayback] AudioContext resumed successfully, state:", this.audioContext.state);
+      } catch (err) {
         // Context couldn't resume (no user interaction yet)
         // Queue the audio anyway - it will play when context resumes
         console.warn(
-          "AudioContext suspended - audio queued but won't play until user interaction"
+          "[AudioPlayback] AudioContext suspended - audio queued but won't play until user interaction. Error:", err
         );
       }
     }
 
     // Convert PCM to AudioBuffer
     const audioBuffer = this.createAudioBuffer(data);
+
+    // Queue the buffer
+    const currentTime = this.audioContext.currentTime;
+    const startTime = Math.max(
+      this.nextPlayTime,
+      currentTime + this.config.bufferAhead
+    );
+
+    this.audioQueue.push({ buffer: audioBuffer, startTime, turnId });
+    this.nextPlayTime = startTime + audioBuffer.duration;
+
+    // Start playback if not already playing and context is running
+    if (
+      !this.isPlaying &&
+      !this.isPaused &&
+      this.audioContext.state === "running"
+    ) {
+      this.playNext();
+    }
+  }
+
+  /**
+   * Queue PCM16 audio data for playback
+   * Convenience method that handles conversion from 16-bit PCM internally.
+   * @param data - PCM16 audio data (16-bit signed integer, little-endian)
+   * @param turnId - Optional turn ID to associate with this audio
+   */
+  async queuePcm16(data: ArrayBuffer, turnId?: string): Promise<void> {
+    if (!this.audioContext || !this.gainNode) {
+      throw new Error("AudioPlayback not initialized");
+    }
+
+    // If turnId provided and doesn't match current turn, ignore
+    if (turnId && this.currentTurnId && turnId !== this.currentTurnId) {
+      console.log("[AudioPlayback] Ignoring PCM16 audio for old turn:", turnId);
+      return;
+    }
+
+    // Try to resume if suspended
+    if (this.audioContext.state === "suspended") {
+      try {
+        await this.audioContext.resume();
+      } catch {
+        // Will play when context resumes
+      }
+    }
+
+    // Convert PCM16 to Float32 and create AudioBuffer
+    const floatData = Float32Array.from(
+      new Int16Array(data),
+      (x) => x / 32768
+    );
+    const numSamples = floatData.length / this.config.channels;
+    const audioBuffer = this.audioContext.createBuffer(
+      this.config.channels,
+      numSamples,
+      this.config.sampleRate
+    );
+
+    // Copy data to buffer channels
+    if (this.config.channels === 1) {
+      audioBuffer.getChannelData(0).set(floatData);
+    } else {
+      // Deinterleave stereo
+      const left = audioBuffer.getChannelData(0);
+      const right = audioBuffer.getChannelData(1);
+      for (let i = 0; i < numSamples; i++) {
+        left[i] = floatData[i * 2];
+        right[i] = floatData[i * 2 + 1];
+      }
+    }
 
     // Queue the buffer
     const currentTime = this.audioContext.currentTime;
@@ -542,6 +691,16 @@ export class AudioPlayback extends TypedEventEmitter<AudioPlaybackEvents> {
     this.audioElement = document.createElement("audio");
     this.audioElement.srcObject = this.mediaStreamDestination.stream;
     this.audioElement.autoplay = true;
+    // Critical for iOS - allows inline playback without fullscreen
+    // Use setAttribute for cross-browser compatibility and TypeScript
+    this.audioElement.setAttribute("playsinline", "true");
+    this.audioElement.setAttribute("webkit-playsinline", "true");
+
+    // Explicitly call play() - will fail without user gesture but that's expected
+    // The audio will start when ensureRunning() is called from user interaction
+    this.audioElement.play().catch(() => {
+      // Expected to fail without user gesture - will retry on ensureRunning()
+    });
 
     // Set output device if specified
     if (this.config.deviceId && "setSinkId" in this.audioElement) {
@@ -595,6 +754,7 @@ export class AudioPlayback extends TypedEventEmitter<AudioPlaybackEvents> {
   private playNext(): void {
     if (!this.audioContext || !this.gainNode || this.audioQueue.length === 0) {
       if (this.isPlaying) {
+        console.log("[AudioPlayback] playNext: queue empty, playback ended");
         this.isPlaying = false;
         this.currentSourceTurnId = null;
         this.emit("ended");
@@ -607,9 +767,12 @@ export class AudioPlayback extends TypedEventEmitter<AudioPlaybackEvents> {
 
     // Skip if this audio is from an old turn
     if (turnId && this.currentTurnId && turnId !== this.currentTurnId) {
+      console.log("[AudioPlayback] playNext: skipping old turn audio");
       this.playNext();
       return;
     }
+
+    console.log("[AudioPlayback] playNext: playing buffer, duration:", buffer.duration.toFixed(3), "s, sampleRate:", buffer.sampleRate, "contextState:", this.audioContext.state);
 
     this.currentSource = this.audioContext.createBufferSource();
     this.currentSource.buffer = buffer;
@@ -617,13 +780,20 @@ export class AudioPlayback extends TypedEventEmitter<AudioPlaybackEvents> {
     this.currentSourceTurnId = turnId ?? null;
 
     this.currentSource.onended = () => {
+      console.log("[AudioPlayback] playNext: buffer ended, playing next");
       this.playNext();
     };
 
     // Schedule playback
     const currentTime = this.audioContext.currentTime;
     const playAt = Math.max(startTime, currentTime);
-    this.currentSource.start(playAt);
+
+    try {
+      this.currentSource.start(playAt);
+      console.log("[AudioPlayback] playNext: started at", playAt.toFixed(3), "currentTime:", currentTime.toFixed(3));
+    } catch (err) {
+      console.error("[AudioPlayback] playNext: failed to start source:", err);
+    }
 
     if (!this.isPlaying) {
       this.isPlaying = true;
