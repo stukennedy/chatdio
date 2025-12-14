@@ -181,10 +181,15 @@ export class Chatdio extends TypedEventEmitter<ChatdioEvents> {
    * ```
    */
   async unlockAudio(): Promise<void> {
-    if (!this.isInitialized) {
+    const wasInitialized = this.isInitialized;
+    if (!wasInitialized) {
       await this.initialize();
     }
-    await this.playback.unlockAudio();
+    // If we just initialized and auto-unlock is enabled, audio is already unlocked.
+    // Only explicitly unlock if we were already initialized or auto-unlock is disabled.
+    if (wasInitialized || this.config.autoUnlockAudio === false) {
+      await this.playback.unlockAudio();
+    }
   }
 
   /**
