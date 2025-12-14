@@ -68,6 +68,13 @@ export class Chatdio extends TypedEventEmitter<ChatdioEvents> {
       // Initialize playback system
       await this.playback.initialize();
 
+      // Auto-unlock audio for iOS if requested (default: true)
+      // This plays a tiny silent buffer to unlock the audio system,
+      // allowing subsequent programmatic audio playback on iOS Safari.
+      if (this.config.autoUnlockAudio !== false) {
+        await this.playback.unlockAudio();
+      }
+
       this.isInitialized = true;
     } catch (error) {
       const err = error instanceof Error ? error : new Error(String(error));

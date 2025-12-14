@@ -157,6 +157,20 @@ export interface ChatdioConfig {
   deviceManager?: DeviceManagerConfig;
   /** Activity analyzer configuration */
   activityAnalyzer?: ActivityAnalyzerConfig;
+  /**
+   * Automatically unlock audio during initialization (recommended for iOS).
+   *
+   * iOS Safari requires audio to be "unlocked" by playing audio directly
+   * in response to a user gesture. When this option is enabled (default),
+   * `initialize()` will automatically call `unlockAudio()` which plays a
+   * tiny silent buffer to unlock the audio system.
+   *
+   * This makes iOS audio work out of the box when `initialize()` is called
+   * from a user gesture (click/touch) - which is the expected usage pattern.
+   *
+   * @default true
+   */
+  autoUnlockAudio?: boolean;
 }
 
 /**

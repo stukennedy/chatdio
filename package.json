@@ -1,6 +1,6 @@
 {
   "name": "chatdio",
-  "version": "1.2.1",
+  "version": "1.2.2",
   "type": "module",
   "description": "Web audio library for conversational AI with mic input, device management, WebSocket streaming, and real-time visualization",
   "main": "dist/index.cjs",
