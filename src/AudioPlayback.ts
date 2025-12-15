@@ -83,18 +83,21 @@ export class AudioPlayback extends TypedEventEmitter<AudioPlaybackEvents> {
     }
 
     this.audioContext = new AudioContextClass();
-    console.log("[AudioPlayback] AudioContext created, state:", this.audioContext.state, "sampleRate:", this.audioContext.sampleRate);
+    // console.log("[AudioPlayback] AudioContext created, state:", this.audioContext.state, "sampleRate:", this.audioContext.sampleRate);
 
     // Try to resume if suspended - this will succeed if any user interaction
     // has occurred on the page. If not, it will remain suspended and we'll
     // try again when audio is queued.
     if (this.audioContext.state === "suspended") {
-      console.log("[AudioPlayback] AudioContext suspended, attempting initial resume...");
-      this.audioContext.resume().then(() => {
-        console.log("[AudioPlayback] Initial resume succeeded, state:", this.audioContext?.state);
-      }).catch((err) => {
-        console.log("[AudioPlayback] Initial resume failed (expected if no user gesture):", err);
-      });
+      // console.log("[AudioPlayback] AudioContext suspended, attempting initial resume...");
+      this.audioContext
+        .resume()
+        .then(() => {
+          // console.log("[AudioPlayback] Initial resume succeeded, state:", this.audioContext?.state);
+        })
+        .catch((err) => {
+          // console.log("[AudioPlayback] Initial resume failed (expected if no user gesture):", err);
+        });
     }
 
     // Listen for state changes to auto-play queued audio when context resumes
@@ -192,13 +195,13 @@ export class AudioPlayback extends TypedEventEmitter<AudioPlaybackEvents> {
       throw new Error("AudioPlayback not initialized");
     }
 
-    console.log("[AudioPlayback] unlockAudio called, state:", this.audioContext.state);
+    // console.log("[AudioPlayback] unlockAudio called, state:", this.audioContext.state);
 
     // Resume context first - MUST happen synchronously in user gesture
     if (this.audioContext.state === "suspended") {
       try {
         await this.audioContext.resume();
-        console.log("[AudioPlayback] AudioContext resumed, new state:", this.audioContext.state);
+        // console.log("[AudioPlayback] AudioContext resumed, new state:", this.audioContext.state);
       } catch (err) {
         console.error("[AudioPlayback] Failed to resume AudioContext:", err);
         throw err;
@@ -207,24 +210,31 @@ export class AudioPlayback extends TypedEventEmitter<AudioPlaybackEvents> {
 
     // Play a tiny silent buffer to unlock iOS audio
     // This is the key trick that unlocks the audio system
-    const buffer = this.audioContext.createBuffer(1, 1, this.audioContext.sampleRate);
+    const buffer = this.audioContext.createBuffer(
+      1,
+      1,
+      this.audioContext.sampleRate
+    );
     const source = this.audioContext.createBufferSource();
     source.buffer = buffer;
     source.connect(this.audioContext.destination);
     source.start(0);
-    console.log("[AudioPlayback] Silent buffer played for iOS unlock");
+    // console.log("[AudioPlayback] Silent buffer played for iOS unlock");
 
     // Also try to play the audio element if it exists
     if (this.audioElement && this.audioElement.paused) {
       try {
         await this.audioElement.play();
-        console.log("[AudioPlayback] Audio element started");
+        // console.log("[AudioPlayback] Audio element started");
       } catch (err) {
-        console.warn("[AudioPlayback] Audio element play failed (may be expected):", err);
+        console.warn(
+          "[AudioPlayback] Audio element play failed (may be expected):",
+          err
+        );
       }
     }
 
-    console.log("[AudioPlayback] unlockAudio complete, final state:", this.audioContext.state);
+    // console.log("[AudioPlayback] unlockAudio complete, final state:", this.audioContext.state);
   }
 
   /**
@@ -276,23 +286,26 @@ export class AudioPlayback extends TypedEventEmitter<AudioPlaybackEvents> {
 
     // If turnId provided and doesn't match current turn, ignore
     if (turnId && this.currentTurnId && turnId !== this.currentTurnId) {
-      console.log("[AudioPlayback] Ignoring audio for old turn:", turnId);
+      // console.log("[AudioPlayback] Ignoring audio for old turn:", turnId);
       return;
     }
 
-    console.log("[AudioPlayback] queueAudio called, bytes:", data.byteLength, "state:", this.audioContext.state);
+    // console.log("[AudioPlayback] queueAudio called, bytes:", data.byteLength, "state:", this.audioContext.state);
 
     // Try to resume if suspended - will succeed if user has interacted with page
     if (this.audioContext.state === "suspended") {
-      console.warn("[AudioPlayback] AudioContext is suspended, attempting resume...");
+      console.warn(
+        "[AudioPlayback] AudioContext is suspended, attempting resume..."
+      );
       try {
         await this.audioContext.resume();
-        console.log("[AudioPlayback] AudioContext resumed successfully, state:", this.audioContext.state);
+        // console.log("[AudioPlayback] AudioContext resumed successfully, state:", this.audioContext.state);
       } catch (err) {
         // Context couldn't resume (no user interaction yet)
         // Queue the audio anyway - it will play when context resumes
         console.warn(
-          "[AudioPlayback] AudioContext suspended - audio queued but won't play until user interaction. Error:", err
+          "[AudioPlayback] AudioContext suspended - audio queued but won't play until user interaction. Error:",
+          err
         );
       }
     }
@@ -333,7 +346,7 @@ export class AudioPlayback extends TypedEventEmitter<AudioPlaybackEvents> {
 
     // If turnId provided and doesn't match current turn, ignore
     if (turnId && this.currentTurnId && turnId !== this.currentTurnId) {
-      console.log("[AudioPlayback] Ignoring PCM16 audio for old turn:", turnId);
+      // console.log("[AudioPlayback] Ignoring PCM16 audio for old turn:", turnId);
       return;
     }
 
@@ -347,10 +360,7 @@ export class AudioPlayback extends TypedEventEmitter<AudioPlaybackEvents> {
     }
 
     // Convert PCM16 to Float32 and create AudioBuffer
-    const floatData = Float32Array.from(
-      new Int16Array(data),
-      (x) => x / 32768
-    );
+    const floatData = Float32Array.from(new Int16Array(data), (x) => x / 32768);
     const numSamples = floatData.length / this.config.channels;
     const audioBuffer = this.audioContext.createBuffer(
       this.config.channels,
@@ -754,7 +764,7 @@ export class AudioPlayback extends TypedEventEmitter<AudioPlaybackEvents> {
   private playNext(): void {
     if (!this.audioContext || !this.gainNode || this.audioQueue.length === 0) {
       if (this.isPlaying) {
-        console.log("[AudioPlayback] playNext: queue empty, playback ended");
+        // console.log("[AudioPlayback] playNext: queue empty, playback ended");
         this.isPlaying = false;
         this.currentSourceTurnId = null;
         this.emit("ended");
@@ -767,12 +777,12 @@ export class AudioPlayback extends TypedEventEmitter<AudioPlaybackEvents> {
 
     // Skip if this audio is from an old turn
     if (turnId && this.currentTurnId && turnId !== this.currentTurnId) {
-      console.log("[AudioPlayback] playNext: skipping old turn audio");
+      // console.log("[AudioPlayback] playNext: skipping old turn audio");
       this.playNext();
       return;
     }
 
-    console.log("[AudioPlayback] playNext: playing buffer, duration:", buffer.duration.toFixed(3), "s, sampleRate:", buffer.sampleRate, "contextState:", this.audioContext.state);
+    // console.log("[AudioPlayback] playNext: playing buffer, duration:", buffer.duration.toFixed(3), "s, sampleRate:", buffer.sampleRate, "contextState:", this.audioContext.state);
 
     this.currentSource = this.audioContext.createBufferSource();
     this.currentSource.buffer = buffer;
@@ -780,7 +790,7 @@ export class AudioPlayback extends TypedEventEmitter<AudioPlaybackEvents> {
     this.currentSourceTurnId = turnId ?? null;
 
     this.currentSource.onended = () => {
-      console.log("[AudioPlayback] playNext: buffer ended, playing next");
+      // console.log("[AudioPlayback] playNext: buffer ended, playing next");
       this.playNext();
     };
 
@@ -790,7 +800,7 @@ export class AudioPlayback extends TypedEventEmitter<AudioPlaybackEvents> {
 
     try {
       this.currentSource.start(playAt);
-      console.log("[AudioPlayback] playNext: started at", playAt.toFixed(3), "currentTime:", currentTime.toFixed(3));
+      // console.log("[AudioPlayback] playNext: started at", playAt.toFixed(3), "currentTime:", currentTime.toFixed(3));
     } catch (err) {
       console.error("[AudioPlayback] playNext: failed to start source:", err);
     }
